@@ -6,7 +6,9 @@ import Leaderboard from "@/components/Leaderboard";
 
 function getSellers(): Seller[] {
   const file = join(process.cwd(), "data", "sellers.json");
-  return JSON.parse(readFileSync(file, "utf-8"));
+  const all: Seller[] = JSON.parse(readFileSync(file, "utf-8"));
+  // Filter out placeholder stubs so they never appear in the demo
+  return all.filter((s) => !s.id.startsWith("research_needed"));
 }
 
 function getPreloadedScores(): Record<string, ScoreResult> {
