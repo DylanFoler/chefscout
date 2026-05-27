@@ -63,6 +63,88 @@
     ],
     "recommended_action": "Lead with the fee comparison and the drop-format fit. Calculate their monthly Square costs against Hotplate's structure."
   },
+  "jiaqis_mochi": {
+    "score": 72,
+    "tier": "High-Value",
+    "switch_readiness": 83,
+    "signal_breakdown": [
+      { "signal": "DM to order, SF pickup", "weight": "high", "explanation": "Manual DM ordering is the core friction Hotplate eliminates. Every drop requires individual messages." },
+      { "signal": "Story-based same-day drops", "weight": "high", "explanation": "24-hour story windows means customers who miss the story miss the drop. Hotplate's preorder window captures everyone." },
+      { "signal": "4.7k followers, SF location", "weight": "medium", "explanation": "Solid audience in the sweet spot. Enough demand to make the DM chaos real, not enough infrastructure to absorb it." },
+      { "signal": "Fresh mochi niche — loyal repeat buyers", "weight": "medium", "explanation": "Handmade fresh mochi is a specialty product with a dedicated customer base that will follow to a new platform." }
+    ],
+    "recommended_action": "Lead with the story ordering problem. Customers who miss the story miss the drop entirely. Hotplate captures them all."
+  },
+  "cometochristines": {
+    "score": 69,
+    "tier": "High-Value",
+    "switch_readiness": 62,
+    "signal_breakdown": [
+      { "signal": "Weekly Sunday preorder cadence", "weight": "high", "explanation": "Consistent weekly rhythm with advance preorders is exactly the Hotplate drop model. Already operating this way manually." },
+      { "signal": "8.9k followers, sells out regularly", "weight": "high", "explanation": "Strong audience with proven demand. Covered by The Infatuation, which drives new customer discovery." },
+      { "signal": "Own website (cometochristines.com)", "weight": "medium", "explanation": "Already has a working preorder system. Switch motivation is about reducing Shopify fees and simplifying the flow, not escaping chaos." },
+      { "signal": "Potrero Hill microbakery", "weight": "medium", "explanation": "Community-rooted operation with a neighborhood following. Loyal repeat buyers are the foundation." },
+      { "signal": "Thu-Sat hours only", "weight": "low", "explanation": "Limited availability means constrained supply — which is actually the right setup for Hotplate's preorder drop model." }
+    ],
+    "recommended_action": "Lead with the fee comparison and UX simplification. They already have the drop behavior. Hotplate is just a better-fitted tool."
+  },
+  "kayabakerysf": {
+    "score": 66,
+    "tier": "High-Value",
+    "switch_readiness": 71,
+    "signal_breakdown": [
+      { "signal": "Catering and private events only, DM for access", "weight": "high", "explanation": "No public-facing storefront means every customer comes through Instagram DMs. That is exactly the friction Hotplate replaces." },
+      { "signal": "7.9k followers, SF-based", "weight": "high", "explanation": "Solid following in the sweet spot. Demand exists but the access mechanism is purely manual." },
+      { "signal": "No permanent location", "weight": "medium", "explanation": "Popup-only model with no venue dependency makes a Hotplate switch low-risk. No lease to protect." },
+      { "signal": "Boba croissant fusion niche", "weight": "medium", "explanation": "Differentiated product with a specific customer who actively seeks them out. That loyalty transfers to a new ordering platform." }
+    ],
+    "recommended_action": "Pitch Hotplate as a public-facing storefront that replaces the DM inbox. Customers can find and order without having to DM first."
+  },
+  "bernal_bakery": {
+    "score": 48,
+    "tier": "Emerging",
+    "switch_readiness": 44,
+    "signal_breakdown": [
+      { "signal": "Weekly preorder system via website", "weight": "medium", "explanation": "Already running preorders. The behavior is right but a website-based system means they have partial infrastructure." },
+      { "signal": "Bernal Heights storefront", "weight": "low", "explanation": "Physical location reduces the urgency to switch. Hotplate is a supplementary channel for them, not a primary one." },
+      { "signal": "4.7k followers, farmers market presence", "weight": "medium", "explanation": "Multi-channel presence (cafe, farmers market, website) means the operation is established. Switch motivation is lower." },
+      { "signal": "Growing wholesale program", "weight": "low", "explanation": "Moving toward wholesale reduces the direct-to-consumer focus that makes Hotplate most compelling." }
+    ],
+    "recommended_action": "Lower priority. They have a working system. If pitching, frame Hotplate as a drops channel alongside their cafe, not a replacement."
+  },
+  "jinabakes": {
+    "score": 41,
+    "tier": "Hobbyist",
+    "switch_readiness": 33,
+    "signal_breakdown": [
+      { "signal": "15k followers, Japantown storefront", "weight": "low", "explanation": "Large following but fully brick-and-mortar. Walk-in model means Hotplate's drop format is not the right fit for their current operation." },
+      { "signal": "Started as home delivery, now permanent", "weight": "low", "explanation": "Graduated from the cottage model. The switch Hotplate is designed for already happened when they signed a lease." },
+      { "signal": "KQED coverage, strong brand", "weight": "low", "explanation": "Well-established in the SF food scene. Not a prospect for the current acquisition strategy." }
+    ],
+    "recommended_action": "Not a current fit. Brick-and-mortar with an established walk-in model. Flag if they ever open a secondary drops channel."
+  },
+  "sol___bakery": {
+    "score": 38,
+    "tier": "Hobbyist",
+    "switch_readiness": 29,
+    "signal_breakdown": [
+      { "signal": "Just opened permanent storefront April 2026", "weight": "low", "explanation": "Graduated from popup to brick-and-mortar. The window for a Hotplate pitch was before they signed the lease in NoPa." },
+      { "signal": "10k followers, NYT-recognized", "weight": "low", "explanation": "Strong brand but the daily walk-in model is now established. Hotplate's drop format does not map to their current operation." },
+      { "signal": "Previously a popup — ideal past profile", "weight": "low", "explanation": "Six months ago this would have been a top-5 target. The lesson is to identify and reach popups before they graduate to storefronts." }
+    ],
+    "recommended_action": "Not a current fit — just opened a storefront. Use as a case study for why early identification matters: catch them before the lease."
+  },
+  "elportenosf": {
+    "score": 22,
+    "tier": "Hobbyist",
+    "switch_readiness": 18,
+    "signal_breakdown": [
+      { "signal": "Established since 2008, Ferry Building location", "weight": "low", "explanation": "16-year-old business with a permanent market stall. Not a cottage food switcher." },
+      { "signal": "Online ordering and delivery already operational", "weight": "low", "explanation": "Fully e-commerce enabled with their own ordering site. No clear pain point for Hotplate to solve." },
+      { "signal": "Napa Valley second location", "weight": "low", "explanation": "Multi-location operation well beyond the indie maker profile Hotplate is optimized for." }
+    ],
+    "recommended_action": "Not a fit. Skip entirely. Established multi-location operation with no drop-format use case."
+  },
   "chocolateboybakery": {
     "score": 28,
     "tier": "Hobbyist",
