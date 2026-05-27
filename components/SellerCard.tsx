@@ -66,11 +66,12 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
 
   return (
     <div className={`rounded-xl border bg-zinc-900 overflow-hidden ${isNew ? "border-emerald-700" : "border-zinc-800"}`}>
-      {/* Header row */}
-      <button
-        className="w-full text-left px-5 py-4 flex items-center gap-4 hover:bg-zinc-800/60 transition-colors"
-        onClick={() => score && setExpanded((e) => !e)}
-        disabled={loading || error}
+      {/* Header row — div not button so the Retry button inside is valid HTML */}
+      <div
+        className={`w-full text-left px-5 py-4 flex items-center gap-4 transition-colors ${
+          score ? "hover:bg-zinc-800/60 cursor-pointer" : "cursor-default"
+        }`}
+        onClick={() => score && !loading && !error && setExpanded((e) => !e)}
       >
         {/* Score circle */}
         <div className="shrink-0 w-14 h-14 rounded-full flex items-center justify-center border-2 border-zinc-700 bg-zinc-800">
@@ -142,7 +143,7 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
             <span className="text-zinc-600 text-sm">{expanded ? "▲" : "▼"}</span>
           )}
         </div>
-      </button>
+      </div>
 
       {/* Expanded content */}
       {expanded && score && (
