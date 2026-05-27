@@ -17,14 +17,12 @@ async function pLimit<T>(
 ): Promise<T[]> {
   const results: T[] = new Array(fns.length);
   let i = 0;
-
   async function worker() {
     while (i < fns.length) {
       const idx = i++;
       results[idx] = await fns[idx]();
     }
   }
-
   await Promise.all(Array.from({ length: concurrency }, worker));
   return results;
 }
@@ -32,13 +30,16 @@ async function pLimit<T>(
 const SCAN_PHASES = [
   "Scanning #sfpopup...",
   "Checking #sfdrops...",
-  "Reading Off the Grid vendor list...",
   "Scanning #sfbaker...",
+  "Reading Off the Grid list...",
   "Cross-referencing Hotplate...",
-  "Analyzing new candidates...",
+  "Analyzing candidates...",
 ];
 
-type Props = { sellers: Seller[]; preloadedScores?: Record<string, ScoreResult> };
+type Props = {
+  sellers: Seller[];
+  preloadedScores?: Record<string, ScoreResult>;
+};
 
 export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
   const [allSellers, setAllSellers] = useState<Seller[]>(sellers);
@@ -50,6 +51,7 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
       ])
     )
   );
+
   const hasPreloaded = sellers.some((s) => preloadedScores[s.id]);
   const [scoring, setScoring] = useState(false);
   const [sorted, setSorted] = useState(hasPreloaded);
@@ -70,63 +72,96 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(seller),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) throw new Error("score api error");
       const score: ScoreResult = await res.json();
       patchState(seller.id, { score, loading: false });
     } catch {
       patchState(seller.id, { loading: false, error: true });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function scoreAll() {
     setScoring(true);
     setSorted(false);
-    const tasks = allSellers.map((s) => () => scoreOne(s));
-    await pLimit(tasks, 5);
-    setSorted(true);
-    setScoring(false);
+    // snapshot current sellers to avoid stale closure
+    setAllSellers((current) => {
+      const tasks = current.map((s) => () => scoreOne(s));
+      pLimit(tasks, 5).then(() => {
+        setSorted(true);
+        setScoring(false);
+      });
+      return current;
+    });
   }
 
   async function runScan() {
     setScanning(true);
     setScanResult(null);
+
+    // start phase animation
     let phaseIdx = 0;
     setScanPhase(SCAN_PHASES[0]);
-
     phaseRef.current = setInterval(() => {
       phaseIdx = (phaseIdx + 1) % SCAN_PHASES.length;
       setScanPhase(SCAN_PHASES[phaseIdx]);
-    }, 380);
+    }, 420);
 
     try {
+      // read current handles inside setState callback to avoid stale closure
+      let currentHandles: string[] = [];
+      setAllSellers((cur) => {
+        currentHandles = cur.map((s) => s.handle);
+        return cur;
+      });
+
+      // small tick to let setState flush before reading
+      await new Promise((r) => setTimeout(r, 0));
+
+      // re-read synchronously via allSellers ref below
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ excludeIds: allSellers.map((s) => s.id) }),
+        body: JSON.stringify({ excludeHandles: currentHandles }),
       });
-      const { found }: { found: Seller[] } = await res.json();
 
-      if (found.length > 0) {
-        setAllSellers((prev) => [...prev, ...found]);
-        setStates((prev) => ({
-          ...prev,
-          ...Object.fromEntries(
-            found.map((s) => [
-              s.id,
-              { score: null, loading: false, error: false, isNew: true },
-            ])
-          ),
-        }));
-        setScanResult(
-          `Found ${found.length} new candidate${found.length > 1 ? "s" : ""}`
-        );
-      } else {
+      const { found, error }: { found: Seller[]; error?: string } = await res.json();
+
+      if (error || !found || found.length === 0) {
         setScanResult("No new candidates found");
+        return;
       }
+
+      // add discovered sellers to state
+      setAllSellers((prev) => {
+        const existingIds = new Set(prev.map((s) => s.id));
+        const fresh = found.filter((s) => !existingIds.has(s.id));
+        return [...prev, ...fresh];
+      });
+
+      setStates((prev) => ({
+        ...prev,
+        ...Object.fromEntries(
+          found.map((s) => [
+            s.id,
+            { score: null, loading: false, error: false, isNew: true },
+          ])
+        ),
+      }));
+
+      setScanResult(
+        `Found ${found.length} new candidate${found.length !== 1 ? "s" : ""}`
+      );
+
+      // auto-score each discovery immediately
+      found.forEach((s) => scoreOne(s));
     } catch {
       setScanResult("Scan failed — try again");
     } finally {
-      if (phaseRef.current) clearInterval(phaseRef.current);
+      if (phaseRef.current) {
+        clearInterval(phaseRef.current);
+        phaseRef.current = null;
+      }
       setScanning(false);
       setScanPhase("");
     }
@@ -138,6 +173,7 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     };
   }, []);
 
+  // sort: scored sellers by score desc, unscored sink to bottom
   const displayed = sorted
     ? [...allSellers].sort((a, b) => {
         const sa = states[a.id]?.score?.score ?? -1;
@@ -147,8 +183,9 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     : allSellers;
 
   const anyScored = allSellers.some((s) => states[s.id]?.score);
-  const allDiscoveredScored =
-    allSellers.every((s) => !states[s.id]?.isNew || states[s.id]?.score);
+  const newOnesScoring = allSellers.some(
+    (s) => states[s.id]?.isNew && states[s.id]?.loading
+  );
 
   return (
     <div className="space-y-6">
@@ -157,11 +194,11 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         <button
           onClick={scoreAll}
           disabled={scoring || scanning}
-          className="px-6 py-2.5 rounded-full bg-white text-black text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          className="px-5 py-2 rounded-full bg-white text-black text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
         >
           {scoring ? (
             <>
-              <div className="w-4 h-4 rounded-full border-2 border-zinc-400 border-t-zinc-800 animate-spin" />
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-400 border-t-zinc-800 animate-spin" />
               Scoring...
             </>
           ) : anyScored ? (
@@ -174,19 +211,19 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         <button
           onClick={runScan}
           disabled={scanning || scoring}
-          className="px-6 py-2.5 rounded-full bg-zinc-800 text-white text-sm font-semibold hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+          className="px-5 py-2 rounded-full bg-zinc-800 text-white text-sm font-semibold hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 min-w-45"
         >
           {scanning ? (
             <>
-              <div className="w-4 h-4 rounded-full border-2 border-zinc-600 border-t-zinc-300 animate-spin" />
-              <span className="text-zinc-400 text-xs font-normal tabular-nums">
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-600 border-t-zinc-300 animate-spin shrink-0" />
+              <span className="text-zinc-400 text-xs font-normal truncate">
                 {scanPhase}
               </span>
             </>
           ) : (
             <>
               <svg
-                className="w-4 h-4 text-zinc-400"
+                className="w-3.5 h-3.5 text-zinc-400 shrink-0"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -212,8 +249,8 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
             }`}
           >
             {scanResult}
-            {scanResult.startsWith("Found") && !allDiscoveredScored && (
-              <span className="ml-1 opacity-60">— score them to rank</span>
+            {newOnesScoring && (
+              <span className="ml-1.5 opacity-60">scoring...</span>
             )}
           </span>
         )}

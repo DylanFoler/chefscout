@@ -104,7 +104,7 @@ export default function ArchitecturePage() {
               <div key={s.step} className="flex gap-4">
                 <div className="flex flex-col items-center">
                   <div
-                    className={`w-7 h-7 rounded-full border border-zinc-700 bg-zinc-800 flex items-center justify-center text-xs font-bold ${s.color} flex-shrink-0`}
+                    className={`w-7 h-7 rounded-full border border-zinc-700 bg-zinc-800 flex items-center justify-center text-xs font-bold ${s.color} shrink-0`}
                   >
                     {s.step}
                   </div>

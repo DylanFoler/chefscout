@@ -73,7 +73,7 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
         disabled={loading || error}
       >
         {/* Score circle */}
-        <div className="flex-shrink-0 w-14 h-14 rounded-full flex items-center justify-center border-2 border-zinc-700 bg-zinc-800">
+        <div className="shrink-0 w-14 h-14 rounded-full flex items-center justify-center border-2 border-zinc-700 bg-zinc-800">
           {loading ? (
             <div className="w-5 h-5 rounded-full border-2 border-zinc-600 border-t-zinc-300 animate-spin" />
           ) : error ? (
@@ -126,7 +126,7 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
         </div>
 
         {/* Retry / expand caret */}
-        <div className="flex-shrink-0 flex items-center gap-2">
+        <div className="shrink-0 flex items-center gap-2">
           {error && (
             <button
               onClick={(e) => {
@@ -209,7 +209,7 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-zinc-500 uppercase tracking-wider">
                     {outreach.channel.replace("_", " ")}
-                    {outreach.subject && ` — ${outreach.subject}`}
+                    {outreach.subject && `: ${outreach.subject}`}
                   </div>
                   <button
                     onClick={copyOutreach}

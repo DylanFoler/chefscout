@@ -39,11 +39,17 @@ Return JSON:
 
     if (
       typeof result.score !== "number" ||
+      typeof result.switch_readiness !== "number" ||
       !result.tier ||
-      !Array.isArray(result.signal_breakdown)
+      !Array.isArray(result.signal_breakdown) ||
+      !result.recommended_action
     ) {
       throw new Error("Invalid score shape");
     }
+
+    // clamp both scores to 0-100
+    result.score = Math.min(100, Math.max(0, Math.round(result.score)));
+    result.switch_readiness = Math.min(100, Math.max(0, Math.round(result.switch_readiness)));
 
     return Response.json(result);
   } catch (err) {
