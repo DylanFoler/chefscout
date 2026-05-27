@@ -52,6 +52,12 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     )
   );
 
+  // Ref so scoreAll and runScan always read the latest sellers without stale closure
+  const allSellersRef = useRef(allSellers);
+  useEffect(() => {
+    allSellersRef.current = allSellers;
+  }, [allSellers]);
+
   const hasPreloaded = sellers.some((s) => preloadedScores[s.id]);
   const [scoring, setScoring] = useState(false);
   const [sorted, setSorted] = useState(hasPreloaded);
@@ -60,12 +66,11 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
   const [scanResult, setScanResult] = useState<string | null>(null);
   const phaseRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  function patchState(id: string, patch: Partial<SellerState>) {
-    setStates((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
-  }
-
   const scoreOne = useCallback(async (seller: Seller) => {
-    patchState(seller.id, { loading: true, error: false });
+    setStates((prev) => ({
+      ...prev,
+      [seller.id]: { ...prev[seller.id], loading: true, error: false },
+    }));
     try {
       const res = await fetch("/api/score", {
         method: "POST",
@@ -74,32 +79,36 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
       });
       if (!res.ok) throw new Error("score api error");
       const score: ScoreResult = await res.json();
-      patchState(seller.id, { score, loading: false });
+      setStates((prev) => ({
+        ...prev,
+        [seller.id]: { ...prev[seller.id], score, loading: false },
+      }));
     } catch {
-      patchState(seller.id, { loading: false, error: true });
+      // If there is already a score, silently restore it — no exclamation mark
+      setStates((prev) => ({
+        ...prev,
+        [seller.id]: {
+          ...prev[seller.id],
+          loading: false,
+          error: prev[seller.id]?.score == null,
+        },
+      }));
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   async function scoreAll() {
     setScoring(true);
     setSorted(false);
-    // snapshot current sellers to avoid stale closure
-    setAllSellers((current) => {
-      const tasks = current.map((s) => () => scoreOne(s));
-      pLimit(tasks, 5).then(() => {
-        setSorted(true);
-        setScoring(false);
-      });
-      return current;
-    });
+    const tasks = allSellersRef.current.map((s) => () => scoreOne(s));
+    await pLimit(tasks, 5);
+    setSorted(true);
+    setScoring(false);
   }
 
   async function runScan() {
     setScanning(true);
     setScanResult(null);
 
-    // start phase animation
     let phaseIdx = 0;
     setScanPhase(SCAN_PHASES[0]);
     phaseRef.current = setInterval(() => {
@@ -108,17 +117,8 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     }, 420);
 
     try {
-      // read current handles inside setState callback to avoid stale closure
-      let currentHandles: string[] = [];
-      setAllSellers((cur) => {
-        currentHandles = cur.map((s) => s.handle);
-        return cur;
-      });
+      const currentHandles = allSellersRef.current.map((s) => s.handle);
 
-      // small tick to let setState flush before reading
-      await new Promise((r) => setTimeout(r, 0));
-
-      // re-read synchronously via allSellers ref below
       const res = await fetch("/api/scan", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -132,11 +132,9 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         return;
       }
 
-      // add discovered sellers to state
       setAllSellers((prev) => {
         const existingIds = new Set(prev.map((s) => s.id));
-        const fresh = found.filter((s) => !existingIds.has(s.id));
-        return [...prev, ...fresh];
+        return [...prev, ...found.filter((s) => !existingIds.has(s.id))];
       });
 
       setStates((prev) => ({
@@ -153,7 +151,6 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         `Found ${found.length} new candidate${found.length !== 1 ? "s" : ""}`
       );
 
-      // auto-score each discovery immediately
       found.forEach((s) => scoreOne(s));
     } catch {
       setScanResult("Scan failed. Try again");
@@ -173,7 +170,6 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     };
   }, []);
 
-  // sort: scored sellers by score desc, unscored sink to bottom
   const displayed = sorted
     ? [...allSellers].sort((a, b) => {
         const sa = states[a.id]?.score?.score ?? -1;
@@ -189,7 +185,6 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
 
   return (
     <div className="space-y-6">
-      {/* Toolbar */}
       <div className="flex flex-wrap items-center gap-3">
         <button
           onClick={scoreAll}
@@ -257,12 +252,11 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
 
         {anyScored && !scoring && !scanResult && (
           <span className="text-xs text-zinc-500">
-            Sorted by score , click any card to expand
+            Sorted by score — click any card to expand
           </span>
         )}
       </div>
 
-      {/* Cards */}
       <div className="space-y-3">
         {displayed.map((seller) => (
           <SellerCard
