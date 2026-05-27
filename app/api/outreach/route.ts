@@ -33,6 +33,7 @@ Rules:
 - Mention Hotplate in one sentence after the hook
 - End with low-friction CTA (quick chat, setup link, no pressure)
 - Sound like a human who looked at their account, not a template
+- No em dashes. Use plain punctuation (commas, periods, colons) instead
 
 Return JSON:
 {

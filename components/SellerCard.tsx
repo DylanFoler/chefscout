@@ -27,10 +27,11 @@ type Props = {
   score: ScoreResult | null;
   loading: boolean;
   error: boolean;
+  isNew?: boolean;
   onRetry: () => void;
 };
 
-export default function SellerCard({ seller, score, loading, error, onRetry }: Props) {
+export default function SellerCard({ seller, score, loading, error, isNew, onRetry }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [outreach, setOutreach] = useState<OutreachResult | null>(null);
   const [outreachLoading, setOutreachLoading] = useState(false);
@@ -64,7 +65,7 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
+    <div className={`rounded-xl border bg-zinc-900 overflow-hidden ${isNew ? "border-emerald-700" : "border-zinc-800"}`}>
       {/* Header row */}
       <button
         className="w-full text-left px-5 py-4 flex items-center gap-4 hover:bg-zinc-800/60 transition-colors"
@@ -89,6 +90,11 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-white">{seller.name}</span>
             <span className="text-zinc-400 text-sm">{seller.handle}</span>
+            {isNew && (
+              <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-900 text-emerald-300 border border-emerald-700">
+                New
+              </span>
+            )}
             <span
               className={`text-xs px-2 py-0.5 rounded-full font-medium ${PLATFORM_STYLES[seller.platform]}`}
             >
