@@ -70,7 +70,7 @@ export default function ArchitecturePage() {
                 label: "Score",
                 color: "text-emerald-400",
                 detail:
-                  "Claude Haiku scores each new discovery in batch — same rubric as this prototype, running against the /api/score endpoint. Existing sellers are re-scored weekly so that accounts that gain followers or add drop cadence move up automatically.",
+                  "Claude Haiku scores each new discovery in batch using the same rubric as this prototype, running against the /api/score endpoint. Existing sellers are re-scored weekly so that accounts that gain followers or add drop cadence move up automatically.",
               },
               {
                 step: "3",
@@ -84,7 +84,7 @@ export default function ArchitecturePage() {
                 label: "Outreach",
                 color: "text-orange-400",
                 detail:
-                  "Claude Sonnet drafts a personalized DM for each top-ranked seller. The draft leads with their specific pain — DM chaos, story ordering, Square fees — before naming Hotplate. A human reviews and sends.",
+                  "Claude Sonnet drafts a personalized DM for each top-ranked seller. The draft leads with their specific pain (DM chaos, story ordering, Square fees) before naming Hotplate. A human reviews and sends.",
               },
               {
                 step: "5",
@@ -98,7 +98,7 @@ export default function ArchitecturePage() {
                 label: "Feed back",
                 color: "text-purple-400",
                 detail:
-                  "Conversion outcomes (accepted, ignored, bounced) are tagged by score tier and outreach channel. That signal feeds back into the scoring weights — high-converting signals get heavier, low-converting ones get lighter.",
+                  "Conversion outcomes (accepted, ignored, bounced) are tagged by score tier and outreach channel. That signal feeds back into the scoring weights: high-converting signals get heavier, low-converting ones get lighter.",
               },
             ].map((s, i, arr) => (
               <div key={s.step} className="flex gap-4">
@@ -153,7 +153,7 @@ export default function ArchitecturePage() {
                 The best Hotplate prospects are 3-6 months away from opening a
                 storefront: big enough to feel the DM chaos, not yet locked into
                 a lease. Weekly re-scoring surfaces these accounts at the right
-                moment. The window is short — a weekly cadence is the difference
+                moment. The window is short. A weekly cadence is the difference
                 between pitching a popup and pitching a brick-and-mortar.
               </p>
             </div>
@@ -165,7 +165,7 @@ export default function ArchitecturePage() {
               <p className="text-sm text-zinc-500">
                 The hashtag scan and scoring pipeline work in any city. Once the
                 SF leaderboard is dialed in, adding NYC, LA, or Chicago is a
-                config change — not a rebuild.
+                config change, not a rebuild.
               </p>
             </div>
           </div>

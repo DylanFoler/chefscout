@@ -156,7 +156,7 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
       // auto-score each discovery immediately
       found.forEach((s) => scoreOne(s));
     } catch {
-      setScanResult("Scan failed — try again");
+      setScanResult("Scan failed. Try again");
     } finally {
       if (phaseRef.current) {
         clearInterval(phaseRef.current);
@@ -257,7 +257,7 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
 
         {anyScored && !scoring && !scanResult && (
           <span className="text-xs text-zinc-500">
-            Sorted by score — click any card to expand
+            Sorted by score , click any card to expand
           </span>
         )}
       </div>

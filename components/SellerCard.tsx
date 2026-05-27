@@ -81,7 +81,7 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
           ) : score ? (
             <span className="text-xl font-bold text-white">{score.score}</span>
           ) : (
-            <span className="text-zinc-600 text-lg">—</span>
+            <span className="text-zinc-600 text-lg">·</span>
           )}
         </div>
 
