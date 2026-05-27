@@ -27,10 +27,11 @@ type Props = {
   score: ScoreResult | null;
   loading: boolean;
   error: boolean;
+  isNew?: boolean;
   onRetry: () => void;
 };
 
-export default function SellerCard({ seller, score, loading, error, onRetry }: Props) {
+export default function SellerCard({ seller, score, loading, error, isNew, onRetry }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [outreach, setOutreach] = useState<OutreachResult | null>(null);
   const [outreachLoading, setOutreachLoading] = useState(false);
@@ -64,15 +65,16 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
   }
 
   return (
-    <div className="rounded-xl border border-zinc-800 bg-zinc-900 overflow-hidden">
-      {/* Header row */}
-      <button
-        className="w-full text-left px-5 py-4 flex items-center gap-4 hover:bg-zinc-800/60 transition-colors"
-        onClick={() => score && setExpanded((e) => !e)}
-        disabled={loading || error}
+    <div className={`rounded-xl border bg-zinc-900 overflow-hidden ${isNew ? "border-emerald-700" : "border-zinc-800"}`}>
+      {/* Header row — div not button so the Retry button inside is valid HTML */}
+      <div
+        className={`w-full text-left px-5 py-4 flex items-center gap-4 transition-colors ${
+          score ? "hover:bg-zinc-800/60 cursor-pointer" : "cursor-default"
+        }`}
+        onClick={() => score && !loading && !error && setExpanded((e) => !e)}
       >
         {/* Score circle */}
-        <div className="flex-shrink-0 w-14 h-14 rounded-full flex items-center justify-center border-2 border-zinc-700 bg-zinc-800">
+        <div className="shrink-0 w-14 h-14 rounded-full flex items-center justify-center border-2 border-zinc-700 bg-zinc-800">
           {loading ? (
             <div className="w-5 h-5 rounded-full border-2 border-zinc-600 border-t-zinc-300 animate-spin" />
           ) : error ? (
@@ -80,7 +82,7 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
           ) : score ? (
             <span className="text-xl font-bold text-white">{score.score}</span>
           ) : (
-            <span className="text-zinc-600 text-lg">—</span>
+            <span className="text-zinc-600 text-lg">·</span>
           )}
         </div>
 
@@ -89,6 +91,11 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
           <div className="flex items-center gap-2 flex-wrap">
             <span className="font-semibold text-white">{seller.name}</span>
             <span className="text-zinc-400 text-sm">{seller.handle}</span>
+            {isNew && (
+              <span className="text-xs px-2 py-0.5 rounded-full font-semibold bg-emerald-900 text-emerald-300 border border-emerald-700">
+                New
+              </span>
+            )}
             <span
               className={`text-xs px-2 py-0.5 rounded-full font-medium ${PLATFORM_STYLES[seller.platform]}`}
             >
@@ -120,7 +127,7 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
         </div>
 
         {/* Retry / expand caret */}
-        <div className="flex-shrink-0 flex items-center gap-2">
+        <div className="shrink-0 flex items-center gap-2">
           {error && (
             <button
               onClick={(e) => {
@@ -136,7 +143,7 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
             <span className="text-zinc-600 text-sm">{expanded ? "▲" : "▼"}</span>
           )}
         </div>
-      </button>
+      </div>
 
       {/* Expanded content */}
       {expanded && score && (
@@ -203,7 +210,7 @@ export default function SellerCard({ seller, score, loading, error, onRetry }: P
                 <div className="flex items-center justify-between">
                   <div className="text-xs text-zinc-500 uppercase tracking-wider">
                     {outreach.channel.replace("_", " ")}
-                    {outreach.subject && ` — ${outreach.subject}`}
+                    {outreach.subject && `: ${outreach.subject}`}
                   </div>
                   <button
                     onClick={copyOutreach}

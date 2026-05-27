@@ -2,7 +2,7 @@ import { anthropic } from "@/lib/anthropic";
 import { Seller, ScoreResult } from "@/lib/types";
 import { NextRequest } from "next/server";
 
-const SYSTEM = `You are a Hotplate growth analyst. Hotplate is a drops-based ordering platform for independent food makers. Score the given SF food seller on switch-readiness and value. Return ONLY valid JSON matching the schema — no markdown, no extra text.`;
+const SYSTEM = `You are a Hotplate growth analyst. Hotplate is a drops-based ordering platform for independent food makers. Score the given SF food seller on switch-readiness and value. Return ONLY valid JSON matching the schema. No markdown, no extra text.`;
 
 const RUBRIC = `Scoring rubric:
 HIGH signals (+): preorder/drop language in bio, recurring weekly drop cadence, manual ordering method (Google Form, Venmo DM), sold-out posts, 1k-50k engaged followers, SF pickup model, curated menu focus, professional photography.
@@ -39,11 +39,17 @@ Return JSON:
 
     if (
       typeof result.score !== "number" ||
+      typeof result.switch_readiness !== "number" ||
       !result.tier ||
-      !Array.isArray(result.signal_breakdown)
+      !Array.isArray(result.signal_breakdown) ||
+      !result.recommended_action
     ) {
       throw new Error("Invalid score shape");
     }
+
+    // clamp both scores to 0-100
+    result.score = Math.min(100, Math.max(0, Math.round(result.score)));
+    result.switch_readiness = Math.min(100, Math.max(0, Math.round(result.switch_readiness)));
 
     return Response.json(result);
   } catch (err) {

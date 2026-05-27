@@ -2,7 +2,7 @@ import { anthropic } from "@/lib/anthropic";
 import { Seller, OutreachResult } from "@/lib/types";
 import { NextRequest } from "next/server";
 
-const SYSTEM = `You are a Hotplate growth rep drafting outreach to SF food makers. Hotplate lets them set a drop, customers pay upfront, no Venmo chasing. Return ONLY valid JSON — no markdown, no extra text.`;
+const SYSTEM = `You are a real person writing a casual DM to an SF food maker you genuinely follow. You know their account, you like their product, and you want to introduce them to Hotplate. Write like a human, not a rep. Return ONLY valid JSON. No markdown, no extra text.`;
 
 export async function POST(req: NextRequest) {
   const { seller }: { seller: Seller } = await req.json();
@@ -27,12 +27,13 @@ ${seller.notable_signals.length ? `Notable: ${seller.notable_signals.join(", ")}
 
 Rules:
 - Channel: ${channel}
-- ${isDM ? "No subject, no formal sign-off, 3-5 sentences max" : "Include subject, 4-6 sentences"}
-- Lead with THEIR specific pain/moment (clunky order method, selling out), not Hotplate features
-- Reference their actual product by name
-- Mention Hotplate in one sentence after the hook
-- End with low-friction CTA (quick chat, setup link, no pressure)
-- Sound like a human who looked at their account, not a template
+- ${isDM ? "No subject, no formal greeting, no sign-off. Conversational, 2-4 sentences max. Short like a real DM." : "Include subject, 4-6 sentences, professional but warm."}
+- Open with a specific detail from their account that shows you actually follow them (the product, the drop, the caption vibe)
+- Name the friction they feel right now (managing DMs, people missing the story drop, chasing Venmo)
+- Mention Hotplate in one natural sentence, not a pitch sentence
+- Low-pressure close, like you're offering to help not sell something
+- No em dashes. No exclamation points unless it fits the brand voice. No filler phrases like "I wanted to reach out" or "I came across your page."
+- Sound like a text from someone who eats at food popups, not a sales email
 
 Return JSON:
 {
