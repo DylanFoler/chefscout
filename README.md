@@ -2,23 +2,25 @@
 
 A growth tool for Hotplate. ChefScout finds high-value independent food makers in San Francisco who are ready to switch to a drops-based platform, scores them by switch-readiness, and drafts personalized outreach for each one.
 
-The demo is a leaderboard of SF food makers, each with an AI-generated value score, a breakdown of the signals behind the score, and a ready-to-copy outreach message. Scores are preloaded so the demo works instantly. You can also re-score any seller live against Claude.
+The demo is a leaderboard of 13 real SF food makers, each with an AI-generated value score, a signal breakdown, and a ready-to-copy outreach message. Scores are preloaded so the demo works instantly with no API calls. Live scoring, outreach generation, and discovery scanning are available when an API key is present.
 
 ---
 
 ## What it does
 
-**Scoring** - Claude Haiku evaluates each seller against a rubric: drop cadence, manual ordering method (DM, Google Form, Venmo), sold-out frequency, follower range, and SF pickup model. Returns a 0-100 score, tier label, and signal breakdown.
+**Scoring** - Claude Haiku evaluates each seller against a rubric: drop cadence, manual ordering method (DM, Google Form, Venmo), sold-out frequency, follower range, and SF pickup model. Returns a 0-100 score, tier label, switch-readiness score, and signal breakdown.
 
-**Outreach generation** - Claude Sonnet writes a short personalized message for each seller. It leads with their specific pain (clunky ordering, sold-out chaos) before mentioning Hotplate. The draft is channel-native, short, and sounds human.
+**Outreach generation** - Claude Sonnet writes a short personalized DM for each seller. Opens with a specific detail from their account, names the friction they feel right now, mentions Hotplate in one natural sentence. Sounds like a person, not a pitch.
 
-**Architecture page** - Shows what the production discovery engine would scan: Instagram hashtags, TikTok, Off the Grid vendor lists, Eventbrite, the California cottage food registry, and Hotplate itself. Scraping is not implemented in this prototype. Sellers come from a manually curated seed file.
+**Scan for new sellers** - Surfaces new SF food maker candidates from a curated discovery pool. Newly found sellers appear with a green badge and auto-score immediately.
+
+**Architecture page** - Shows the full 6-step continuous pipeline: Discover, Score, Rank, Outreach, Activate, Feed back. Explains how the scoring rubric compounds as conversion data comes in and how the system expands to new cities.
 
 ---
 
 ## Running it locally
 
-You need an Anthropic API key. Get one at console.anthropic.com.
+You need an Anthropic API key for live scoring and outreach. Get one at console.anthropic.com. The leaderboard and scan work without one.
 
 ```bash
 git clone https://github.com/DylanFoler/chefscout
@@ -46,19 +48,21 @@ Open `http://localhost:3000`.
 
 ```
 app/
-  api/score/route.ts        POST - scores a seller profile via Claude Haiku
+  api/score/route.ts        POST - scores a seller via Claude Haiku
   api/outreach/route.ts     POST - generates outreach draft via Claude Sonnet
+  api/scan/route.ts         POST - surfaces new sellers from discovery pool
   page.tsx                  Main leaderboard view
-  architecture/page.tsx     Production discovery architecture explainer
+  architecture/page.tsx     Discovery architecture and continuous pipeline
 
 components/
-  Leaderboard.tsx           Sorted list with parallel scoring, preloaded scores as default
-  SellerCard.tsx            Expandable card with signal breakdown and outreach generation
+  Leaderboard.tsx           Sorted list, parallel scoring, scan button
+  SellerCard.tsx            Expandable card with signal breakdown and outreach
   ArchitecturePanel.tsx     Discovery sources list
 
 data/
-  sellers.json              16 real-ish SF food makers (manually curated)
-  scores.json               Preloaded scores so the demo works without an API call
+  sellers.json              13 verified real SF food makers
+  scores.json               Preloaded scores for instant demo load
+  discovery_pool.json       6 additional sellers surfaced by the scan button
   discovery_sources.json    What the production engine would scan
 
 lib/
@@ -74,13 +78,13 @@ lib/
 vercel --prod
 ```
 
-Add `ANTHROPIC_API_KEY` to your Vercel project environment variables before deploying. The app has no database and no auth. It is a static-first Next.js app with two serverless API routes.
+Add `ANTHROPIC_API_KEY` to your Vercel project environment variables. The app has no database and no auth.
 
 ---
 
 ## Cost
 
-A full demo run (16 sellers scored plus all outreach drafts generated) costs about $0.10 to $0.15 in API fees. Preloaded scores mean the leaderboard shows immediately at zero cost. Live scoring and outreach generation only fire when a user clicks the buttons.
+A full demo run (13 sellers scored plus all outreach drafts) costs about $0.10 to $0.15 in API fees. Preloaded scores mean the leaderboard shows immediately at zero cost. Scoring and outreach only fire when a user clicks.
 
 Models used:
 - Scoring: `claude-haiku-4-5-20251001` (fast, cheap)
@@ -90,34 +94,36 @@ Models used:
 
 ## Demo script
 
-This is the 60-second walk-through for a screen share.
+60 seconds on a screen share.
 
-1. Open the URL. The leaderboard is already scored and sorted. Established sellers are at the top.
-2. Click the top card. Read the signal breakdown out loud. Point to the tier badge and switch-readiness score.
-3. Click "Generate outreach." Wait 3 seconds. Read the draft. It references the seller's actual product and their specific ordering pain.
+1. Open the URL. Leaderboard is already scored and sorted. Established sellers at the top.
+2. Click the top card. Read the signal breakdown. Point to the tier badge and switch-readiness score.
+3. Click "Generate outreach." Read the draft — it names their actual product and their specific pain.
 4. Copy the draft.
-5. Optional: click Architecture in the nav. Show what the production discovery engine would scan.
+5. Click "Scan for new sellers." Watch it animate through sources, surface 2 new cards, and auto-score them.
+6. Optional: click Architecture. Walk through the 6-step continuous pipeline.
 
 ---
 
-## What is a prototype and what is not
+## What works live vs what is stubbed
 
-**Working live:**
-- Scoring endpoint, calling real Claude with real seller data
-- Outreach generation endpoint, same
-- Preloaded scores for instant demo load
-- Deployed Vercel URL
+**Working:**
+- Preloaded leaderboard, instant load, no API needed
+- Scoring endpoint with real Claude and real seller data
+- Outreach generation with personalized DM drafts
+- Scan button surfacing new sellers and auto-scoring them
+- Architecture page with full pipeline diagram
 
-**Stubbed / architecture-only:**
-- Discovery and scraping layer (sellers are from a JSON seed file)
-- Activation and onboarding automation (described on the architecture page)
-- Funnel tracking (mentioned as a next-phase concept)
+**Stubbed / described only:**
+- Production discovery scraping (Instagram hashtags, Off the Grid, cottage food registry)
+- Activation and onboarding automation
+- Funnel tracking and rubric retraining on conversion data
 
 ---
 
 ## Adding sellers
 
-Edit `data/sellers.json`. Each entry looks like this:
+Edit `data/sellers.json`:
 
 ```json
 {
@@ -135,4 +141,4 @@ Edit `data/sellers.json`. Each entry looks like this:
 }
 ```
 
-To preload a score, add a matching entry to `data/scores.json` keyed by the seller's `id`. Without a preloaded score, the card shows a blank score until the user clicks "Score all sellers."
+To preload a score, add a matching entry to `data/scores.json` keyed by the seller's `id`. To add to the scan pool, add to `data/discovery_pool.json` with the same shape.
