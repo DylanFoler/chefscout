@@ -25,11 +25,29 @@ export async function POST(req: NextRequest) {
       : "email";
   const isDM = channel === "instagram_dm" || channel === "tiktok_dm";
 
-  // Generic, no-handle regional social proof ("a lot of bay area food folks use").
-  const region = (seller.metro_area || seller.city || "").trim().toLowerCase();
-  const folks = region ? `${region} food folks` : "food folks";
+  // Generic, no-handle regional social proof — keep the metro in its proper case
+  // ("a lot of Bay Area food folks use").
+  const metro = (seller.metro_area || seller.city || "").trim();
+  const folks = metro ? `${metro} food folks` : "food folks";
 
-  const SYSTEM = `You write short, casual outreach DMs on behalf of Hotplate to independent food makers. Hotplate is the tool pop-up food makers use to run orders and pickups without all the DM back-and-forth. Your goal is a warm, personal opener that earns a reply and gently offers a quick chat or a visit, never a sales pitch. Sound like a real, down-to-earth person who actually eats at food popups. Return ONLY valid JSON. No markdown, no extra text.`;
+  // We're based in the Bay, so we only offer to physically swing by a maker's
+  // popup when they're in the Bay Area. Everyone else gets the call-only ask.
+  const geo = `${seller.metro_area} ${seller.city} ${seller.neighborhood}`;
+  const isBay =
+    /bay area|san francisco|oakland|berkeley|san jose|peninsula|south bay|east bay|marin|daly city|alameda|\bsf\b/i.test(
+      geo
+    );
+
+  // Only reference catering / event-order chaos if the maker actually does it.
+  const cateringHay = `${seller.what_they_sell} ${seller.current_order_method} ${
+    seller.drop_cadence
+  } ${seller.notable_signals.join(" ")} ${seller.sample_post_caption ?? ""}`;
+  const doesCatering =
+    /cater|\bevents?\b|private event|wholesale|parties|corporate|book(?:ing)? us/i.test(
+      cateringHay
+    );
+
+  const SYSTEM = `You write short, warm outreach DMs on behalf of Hotplate to independent food makers. Hotplate is the tool pop-up food makers use to run orders and pickups without all the scheduling back-and-forth. Your goal is a friendly, personal opener that earns a reply and gently offers a quick chat (and, when appropriate, a visit), never a sales pitch. Sound like a real, down-to-earth person who actually eats at food popups. Return ONLY valid JSON. No markdown, no extra text.`;
 
   const userMsg = `Draft an OPENER outreach message for:
 Name: ${seller.name}
@@ -42,20 +60,29 @@ Metro area: ${seller.metro_area}
 ${seller.sample_post_caption ? `Recent post: "${seller.sample_post_caption}"` : ""}
 ${seller.notable_signals.length ? `Notable: ${seller.notable_signals.join(", ")}` : ""}
 
-Match the tone, structure, and warmth of this example EXACTLY — it is the target voice:
-"hey! i'm with hotplate, the tool a lot of bay area food folks use to run orders and pickups without all the dm back-and-forth. just came across your mochi donuts and they look unreal. seems like they move pretty fast too! figured we might be able to take some of the catering and event-order chaos off your plate, so people aren't sliding into your dms at all hours. would you be up for hopping on a quick call to see if any of it'd be useful? or honestly, i'd love to just swing by your next pop-up and say hi if that's easier :)"
+Match the tone, structure, capitalization, and warmth of this GOLD-STANDARD example exactly:
+"Hey! I'm with Hotplate, the tool a lot of Bay Area food folks use to run orders and pickups without all the scheduling back-and-forth. I just came across your mochi donuts and they look unreal, and it seems like they move pretty fast too! I'd love to help take some of the catering and event-order chaos off your plate so people aren't sliding into your DMs at all hours. Would you be up for hopping on a quick call to see if any of it might be useful? Or honestly, I'd love to just swing by your next pop-up and say hi if that's easier. :)"
 
 Rules:
 - Channel: ${channel}. ${
     isDM
-      ? "No subject, no greeting, no sign-off. 3-5 short sentences, reads like a real DM."
+      ? "No subject, no formal greeting line, no sign-off. 3-5 sentences, reads like a real DM."
       : "Short subject + 3-5 warm, casual sentences."
   }
-- Open with "hey! i'm with hotplate, the tool a lot of ${folks} use to run orders and pickups without all the dm back-and-forth" (or a very close, natural variant). Do NOT introduce yourself by name.
-- Then ONE specific, genuine compliment on THEIR actual product (name the real product), plus a light nod to traction (selling out / moving fast / growing). Real, not generic flattery.
-- Then a help line that names their real friction concretely and a little vividly (people sliding into their DMs at all hours, chasing Venmo, the catering / event-order chaos), framed as taking it off their plate. Not a pitch.
-- Close with a soft, low-pressure DUAL ask: up for a quick call to see if any of it'd be useful, OR you'd love to just swing by their next pop-up / drop to say hi if that's easier. End with ":)" or one fitting emoji.
-- lowercase-casual, warm, a little enthusiastic. No name. No other accounts or @handles. No calendar link. No em dashes. No buzzwords. Nothing that reads like a sales template ("I wanted to reach out", "I came across your page").
+- Use normal sentence case with proper capitalization, like the example: capitalize the start of sentences, "I", and proper nouns (Hotplate, ${metro || "the metro"}, DMs). Warm and polished, NOT all-lowercase.
+- Open with: "Hey! I'm with Hotplate, the tool a lot of ${folks} use to run orders and pickups without all the scheduling back-and-forth." Do NOT introduce yourself by name.
+- ONE specific, genuine compliment on THEIR actual product (name it), plus a light nod to traction (moving fast / selling out / growing). Real, not generic flattery.
+- A help line framing Hotplate as taking friction off their plate so people aren't sliding into their DMs at all hours. ${
+    doesCatering
+      ? "This maker DOES catering / events, so you MAY reference taking the catering and event-order chaos off their plate."
+      : "This maker does NOT appear to do catering or events, so do NOT mention catering or events. Focus on their real friction: juggling DM orders, chasing Venmo, and keeping up when drops sell out."
+  }
+- Close with a soft, low-pressure ask. ${
+    isBay
+      ? 'Offer BOTH options: "Would you be up for hopping on a quick call to see if any of it might be useful? Or honestly, I\'d love to just swing by your next pop-up and say hi if that\'s easier. :)"'
+      : "Offer ONLY a quick call — we're based in the Bay Area and can't realistically swing by their location, so do NOT offer to visit or stop by in person. End warmly, e.g. \"Would you be up for hopping on a quick call to see if any of it might be useful? :)\""
+  }
+- No name. No @handles or other accounts. No calendar link. No em dashes. No buzzwords. Don't use "I wanted to reach out" or anything that reads like a sales template.
 
 Return JSON:
 {
