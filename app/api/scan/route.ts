@@ -65,7 +65,7 @@ Return a JSON array. Each element:
   "drop_cadence": "How often / when they sell",
   "notable_signals": ["short signal", "short signal"],
   "sample_post_caption": "A representative caption if you saw one (optional)",
-  "website_or_linktree": "url if any, else null"
+  "website_or_linktree": "their link-in-bio / Linktree / website URL — ALWAYS include it when you can find one (we use it to verify they aren't already on Hotplate); else null"
 }
 
 Return ONLY the JSON array.`;
@@ -183,6 +183,86 @@ function looksOnHotplate(s: Seller): boolean {
   ].some((f) => !!f && HOTPLATE_URL.test(f));
 }
 
+// --- Hotplate verification (deterministic, fast, parallel) -------------------
+// hotplate.com is a Next.js SSR app: a REAL store slug server-renders the store
+// name into og:title plus the maker's Instagram into the page data, while an
+// unknown slug renders the generic landing (og:title "Hotplate"). So we detect a
+// maker's Hotplate store over plain HTTP — no JS, no LLM — and confirm it's THEM
+// by matching the store's Instagram handle or its name. This replaces a slow LLM
+// web-search pass (~minutes) with a few parallel fetches (~seconds), which keeps
+// the scan under Vercel's 300s function limit while catching the makers the
+// discovery prompt misses.
+const HOTPLATE_LINK = /hotplate\.c(?:om|o)\/([a-z0-9_.-]+)/i;
+const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// Likely Hotplate store slugs for a maker (handle- and name-derived), plus the
+// exact slug if their own bio link already points at a hotplate store.
+function candidateSlugs(seller: Seller): {
+  slugs: string[];
+  fromLink: string | null;
+} {
+  const h = seller.handle.replace(/^@/, "").toLowerCase();
+  const fromLink =
+    seller.website_or_linktree?.match(HOTPLATE_LINK)?.[1]?.toLowerCase() ?? null;
+  const slugs = [fromLink, h, h.replace(/[._]/g, ""), norm(seller.name)].filter(
+    (s): s is string => !!s
+  );
+  return { slugs: [...new Set(slugs)], fromLink };
+}
+
+// Fetch a hotplate.com store page; return { name, ig } if it's a real store, else
+// null (generic landing, non-200, or network error -> "couldn't confirm").
+async function fetchHotplateStore(
+  slug: string
+): Promise<{ name: string; ig: string | null } | null> {
+  try {
+    const res = await fetch(`https://www.hotplate.com/${slug}`, {
+      signal: AbortSignal.timeout(8000),
+      headers: { "user-agent": "Mozilla/5.0 (ChefScout)" },
+    });
+    if (!res.ok) return null;
+    const html = await res.text();
+    const og = html.match(/og:title"\s+content="([^"]*)"/i)?.[1]?.trim();
+    if (!og || og === "Hotplate") return null; // generic landing = no store here
+    const ig =
+      html.match(/instagram\.com\/([A-Za-z0-9_.]+)/i)?.[1]?.toLowerCase() ?? null;
+    return { name: og, ig };
+  } catch {
+    return null;
+  }
+}
+
+// Returns the lowercased handles of candidates confirmed to be on Hotplate.
+// Every candidate and every slug probe runs in parallel (~a few seconds total).
+async function flagHotplateUsers(candidates: Seller[]): Promise<Set<string>> {
+  const flagged = new Set<string>();
+  if (candidates.length === 0) return flagged;
+
+  await Promise.all(
+    candidates.map(async (s) => {
+      const handle = s.handle.replace(/^@/, "").toLowerCase();
+      const nName = norm(s.name);
+      const { slugs, fromLink } = candidateSlugs(s);
+      const stores = await Promise.all(
+        slugs.map((slug) =>
+          fetchHotplateStore(slug).then((store) => ({ slug, store }))
+        )
+      );
+      const onHotplate = stores.some(({ slug, store }) => {
+        if (!store) return false;
+        if (slug === fromLink) return true; // it's the link in their own bio
+        if (store.ig && store.ig === handle) return true; // store IG == this maker
+        const t = norm(store.name); // store name ~ maker name
+        return (
+          !!t && !!nName && (t === nName || t.includes(nName) || nName.includes(t))
+        );
+      });
+      if (onHotplate) flagged.add(s.handle.toLowerCase());
+    })
+  );
+  return flagged;
+}
+
 // Run the live web search and return validated, region-matched makers.
 async function searchMakers(
   region: string | null,
@@ -218,9 +298,10 @@ async function searchMakers(
       // Classic web search (no dynamic filtering). The _20260209 version runs
       // result-filtering CODE on every batch — ~23 server round-trips and ~5 min
       // per scan. _20250305 just reads results directly; max_uses actually caps
-      // the search count. Raised to 12 to give room to find 5+ makers AND
-      // verify each isn't already on Hotplate (slower scans, but bounded).
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 10 }],
+      // the search count. Hotplate verification is now a fast parallel HTTP check
+      // (not an LLM pass), so discovery gets the budget; capped at 8 to keep the
+      // total scan comfortably under Vercel's 300s limit.
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
       messages,
     });
     const msg = await stream.finalMessage();
@@ -238,9 +319,21 @@ async function searchMakers(
     (s) => !looksOnHotplate(s)
   );
   // Never surface a candidate the active location filter would immediately hide.
-  return locationQuery
+  const regional = locationQuery
     ? parsed.filter((s) => matchesLocation(s, locationQuery))
     : parsed;
+
+  // Reliable Hotplate gate: actively verify each remaining candidate isn't already
+  // on Hotplate (searches + fetches their links for a hotplate.com/<slug> store).
+  // The discovery prompt + URL filter miss some; this catches the discoverable ones.
+  const onHotplate = await flagHotplateUsers(regional);
+  if (onHotplate.size) {
+    console.log(
+      "[scan] excluded (already on Hotplate):",
+      [...onHotplate].join(", ")
+    );
+  }
+  return regional.filter((s) => !onHotplate.has(s.handle.toLowerCase()));
 }
 
 export async function POST(req: NextRequest) {
