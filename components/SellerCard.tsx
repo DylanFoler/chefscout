@@ -27,31 +27,37 @@ type Props = {
   score: ScoreResult | null;
   loading: boolean;
   error: boolean;
+  refreshFailed?: boolean;
   isNew?: boolean;
   onRetry: () => void;
 };
 
-export default function SellerCard({ seller, score, loading, error, isNew, onRetry }: Props) {
+export default function SellerCard({ seller, score, loading, error, refreshFailed, isNew, onRetry }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [outreach, setOutreach] = useState<OutreachResult | null>(null);
   const [outreachLoading, setOutreachLoading] = useState(false);
-  const [outreachError, setOutreachError] = useState(false);
+  const [outreachError, setOutreachError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+
+  const tierStyle = score ? TIER_STYLES[score.tier] ?? "bg-zinc-700 text-zinc-300" : "";
 
   async function generateOutreach() {
     setOutreachLoading(true);
-    setOutreachError(false);
+    setOutreachError(null);
     try {
       const res = await fetch("/api/outreach", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ seller }),
       });
-      if (!res.ok) throw new Error("Failed");
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        throw new Error(data?.error || "Outreach failed.");
+      }
       const data: OutreachResult = await res.json();
       setOutreach(data);
-    } catch {
-      setOutreachError(true);
+    } catch (err) {
+      setOutreachError(err instanceof Error ? err.message : "Outreach failed.");
     } finally {
       setOutreachLoading(false);
     }
@@ -59,9 +65,13 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
 
   async function copyOutreach() {
     if (!outreach) return;
-    await navigator.clipboard.writeText(outreach.body);
-    setCopied(true);
-    setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(outreach.body);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch (err) {
+      console.error("Copy failed:", err);
+    }
   }
 
   return (
@@ -103,15 +113,25 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
             </span>
             {score && (
               <span
-                className={`text-xs px-2 py-0.5 rounded-full font-semibold ${TIER_STYLES[score.tier]}`}
+                className={`text-xs px-2 py-0.5 rounded-full font-semibold ${tierStyle}`}
               >
                 {score.tier}
+              </span>
+            )}
+            {score && refreshFailed && (
+              <span
+                title="Last refresh failed — showing the previous score"
+                className="text-xs px-2 py-0.5 rounded-full font-medium bg-amber-950 text-amber-300 border border-amber-800"
+              >
+                couldn&apos;t refresh
               </span>
             )}
           </div>
           <div className="text-zinc-400 text-sm mt-0.5 truncate">{seller.what_they_sell}</div>
           <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500">
             <span>{seller.followers.toLocaleString()} followers</span>
+            <span>·</span>
+            <span>{seller.neighborhood}</span>
             <span>·</span>
             <span>{seller.drop_cadence}</span>
             {score && (
@@ -154,10 +174,13 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
               Signal Breakdown
             </h3>
             <div className="space-y-2">
+              {score.signal_breakdown.length === 0 && (
+                <div className="text-sm text-zinc-600 italic">No signals returned.</div>
+              )}
               {score.signal_breakdown.map((s, i) => (
                 <div key={i} className="flex items-start gap-3">
                   <span
-                    className={`text-xs font-bold uppercase mt-0.5 w-12 flex-shrink-0 ${WEIGHT_COLOR[s.weight]}`}
+                    className={`text-xs font-bold uppercase mt-0.5 w-12 flex-shrink-0 ${WEIGHT_COLOR[s.weight] ?? "text-zinc-400"}`}
                   >
                     {s.weight}
                   </span>
@@ -196,7 +219,7 @@ export default function SellerCard({ seller, score, loading, error, isNew, onRet
             )}
             {outreachError && (
               <div className="flex items-center gap-3">
-                <span className="text-sm text-red-400">Outreach failed.</span>
+                <span className="text-sm text-red-400">{outreachError}</span>
                 <button
                   onClick={generateOutreach}
                   className="text-xs px-3 py-1 rounded-full bg-red-900/60 text-red-300 hover:bg-red-800 transition-colors"

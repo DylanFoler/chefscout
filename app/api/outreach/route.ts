@@ -1,11 +1,23 @@
-import { anthropic } from "@/lib/anthropic";
+import {
+  anthropic,
+  MISSING_KEY,
+  MISSING_KEY_MESSAGE,
+  toErrorResponse,
+} from "@/lib/anthropic";
 import { Seller, OutreachResult } from "@/lib/types";
 import { NextRequest } from "next/server";
 
-const SYSTEM = `You are a real person writing a casual DM to an SF food maker you genuinely follow. You know their account, you like their product, and you want to introduce them to Hotplate. Write like a human, not a rep. Return ONLY valid JSON. No markdown, no extra text.`;
+export const runtime = "nodejs";
+export const maxDuration = 60;
 
 export async function POST(req: NextRequest) {
+  if (MISSING_KEY) {
+    return Response.json({ error: MISSING_KEY_MESSAGE }, { status: 401 });
+  }
+
   const { seller }: { seller: Seller } = await req.json();
+
+  const SYSTEM = `You are a real person writing a casual DM to a ${seller.city} food maker you genuinely follow. You know their account, you like their product, and you want to introduce them to Hotplate. Write like a human, not a rep. Return ONLY valid JSON. No markdown, no extra text.`;
 
   const channel =
     seller.platform === "instagram"
@@ -22,6 +34,8 @@ Sells: ${seller.what_they_sell}
 Current ordering: ${seller.current_order_method}
 Drop cadence: ${seller.drop_cadence}
 Platform: ${seller.platform} (${seller.followers.toLocaleString()} followers)
+Neighborhood: ${seller.neighborhood}
+Metro area: ${seller.metro_area}
 ${seller.sample_post_caption ? `Recent post: "${seller.sample_post_caption}"` : ""}
 ${seller.notable_signals.length ? `Notable: ${seller.notable_signals.join(", ")}` : ""}
 
@@ -43,17 +57,30 @@ Return JSON:
   "rationale": <one sentence on why this angle>
 }`;
 
+  let raw = "";
   try {
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 350,
+      max_tokens: 600,
       system: SYSTEM,
       messages: [{ role: "user", content: userMsg }],
     });
 
-    const raw = msg.content[0].type === "text" ? msg.content[0].text : "";
-    const text = raw.replace(/^```(?:json)?\n?/m, "").replace(/\n?```$/m, "").trim();
-    const result: OutreachResult = JSON.parse(text);
+    const block = msg.content[0];
+    raw = block && block.type === "text" ? block.text : "";
+
+    let text = raw.replace(/```(?:json)?\n?/gm, "").trim();
+    text = text.replace(/,(\s*[}\]])/g, "$1"); // tolerate trailing commas (common LLM quirk)
+    if (!text) throw new Error("Empty response from Claude");
+
+    let result: OutreachResult;
+    try {
+      result = JSON.parse(text);
+    } catch {
+      const m = text.match(/\{[\s\S]*\}/);
+      if (!m) throw new Error("No JSON object in response");
+      result = JSON.parse(m[0]);
+    }
 
     if (!result.body || !result.channel) {
       throw new Error("Invalid outreach shape");
@@ -61,7 +88,8 @@ Return JSON:
 
     return Response.json(result);
   } catch (err) {
-    console.error("Outreach error:", err);
-    return Response.json({ error: "Outreach generation failed" }, { status: 500 });
+    console.error("Outreach error:", err, "Raw response:", raw);
+    const { body, status } = toErrorResponse(err, "Outreach generation failed");
+    return Response.json(body, { status });
   }
 }

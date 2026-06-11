@@ -42,6 +42,8 @@ npm run dev
 
 Open `http://localhost:3000`.
 
+> **Heads up:** after editing `.env.local`, fully restart `npm run dev`. Next.js does not hot-reload environment variables into already-running modules, so a key added (or fixed) mid-session won't take effect until you restart. If a scan/score run reports the key is missing or rejected, restart first.
+
 ---
 
 ## Project structure
@@ -133,6 +135,8 @@ Edit `data/sellers.json`:
   "platform": "instagram",
   "followers": 8000,
   "city": "San Francisco",
+  "neighborhood": "Mission District",
+  "metro_area": "Bay Area",
   "what_they_sell": "Sourdough loaves and focaccia",
   "current_order_method": "DM to order, Venmo payment",
   "drop_cadence": "Weekly Friday drops",

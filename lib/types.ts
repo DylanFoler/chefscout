@@ -5,6 +5,8 @@ export type Seller = {
   platform: "instagram" | "tiktok" | "other";
   followers: number;
   city: string;
+  neighborhood: string;
+  metro_area: string;
   what_they_sell: string;
   current_order_method: string;
   drop_cadence: string;
