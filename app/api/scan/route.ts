@@ -379,46 +379,68 @@ async function searchMakers(
     { role: "user", content: buildUserPrompt(region, excludeHandles) },
   ];
 
-  // Web search runs a server-side loop; if it hits its cap mid-task the API
-  // returns stop_reason "pause_turn" and we re-send to let it continue.
+  // Hard wall-clock bound on discovery. The web-search loop is the dominant,
+  // HIGHLY VARIABLE cost (a sparse region like NY finished in ~113s; a dense one
+  // like Seattle ran past 300s and Vercel 504'd the whole function). We can't
+  // resume a partial stream into usable JSON, so we (a) cap the search budget to
+  // lower the ceiling and (b) abort the stream at a deadline that leaves room for
+  // the enrich/verify pass — the function then returns gracefully (empty) instead
+  // of ever hitting Vercel's 300s cap. A normal scan finishes well before this.
+  const DISCOVERY_DEADLINE_MS = 265_000;
+  const abort = new AbortController();
+  const deadline = setTimeout(() => abort.abort(), DISCOVERY_DEADLINE_MS);
   let rawText = "";
-  for (let i = 0; i < 6; i++) {
-    // Stream instead of awaiting create(): a non-streaming web-search call holds
-    // the connection open for minutes and trips the SDK request timeout
-    // (APIConnectionTimeoutError) — the cause of flaky/empty scans. Streaming
-    // keeps the connection alive until the search loop finishes.
-    // Sonnet 4.6 + light adaptive thinking (needed for reliable structured output
-    // and vetting — thinking-off returned nothing), low effort, searches capped.
-    const stream = anthropic.messages.stream({
-      model: "claude-sonnet-4-6",
-      // Generous output budget: across a long search loop the thinking + tool
-      // blocks + the multi-maker JSON can exceed 16k and truncate (→ 0 parsed).
-      // Streaming supports large outputs without HTTP timeouts.
-      max_tokens: 32000,
-      thinking: { type: "adaptive" },
-      // Medium (not low): low effort returns a conservative ~2-3 makers regardless
-      // of search budget; medium explores more and commits to more candidates,
-      // which is what gets us to 5+. Costs latency — acceptable per the goal.
-      output_config: { effort: "medium" },
-      system: SYSTEM,
-      // Classic web search (no dynamic filtering). The _20260209 version runs
-      // result-filtering CODE on every batch — ~23 server round-trips and ~5 min
-      // per scan. _20250305 just reads results directly; max_uses actually caps
-      // the search count. Hotplate verification is now a fast parallel HTTP check
-      // (not an LLM pass), so discovery gets the budget; capped at 8 to keep the
-      // total scan comfortably under Vercel's 300s limit.
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }],
-      messages,
-    });
-    const msg = await stream.finalMessage();
+  try {
+    // Web search runs a server-side loop; if it hits its cap mid-task the API
+    // returns stop_reason "pause_turn" and we re-send to let it continue.
+    for (let i = 0; i < 6; i++) {
+      // Stream instead of awaiting create(): a non-streaming web-search call holds
+      // the connection open for minutes and trips the SDK request timeout
+      // (APIConnectionTimeoutError) — the cause of flaky/empty scans. Streaming
+      // keeps the connection alive until the search loop finishes.
+      const stream = anthropic.messages.stream(
+        {
+          model: "claude-sonnet-4-6",
+          // Generous output budget: across a long search loop the thinking + tool
+          // blocks + the multi-maker JSON can exceed 16k and truncate (→ 0 parsed).
+          max_tokens: 32000,
+          // Adaptive thinking is required — thinking-off returned nothing.
+          thinking: { type: "adaptive" },
+          // Medium (not low): low effort returns a conservative ~2-3 makers
+          // regardless of search budget; medium explores and commits to more.
+          output_config: { effort: "medium" },
+          system: SYSTEM,
+          // Classic web search (no dynamic filtering — the _20260209 version runs
+          // result-filtering CODE every batch, ~23 round-trips, ~5 min/scan).
+          // max_uses caps the search count and is the real latency lever; 4 keeps
+          // even dense regions safely under the deadline above (6 let Seattle 504).
+          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
+          messages,
+        },
+        { signal: abort.signal }
+      );
 
-    if (msg.stop_reason === "pause_turn") {
-      messages.push({ role: "assistant", content: msg.content });
-      continue;
+      let msg: Anthropic.Message;
+      try {
+        msg = await stream.finalMessage();
+      } catch (err) {
+        if (abort.signal.aborted) {
+          console.warn("[scan] discovery hit the time budget; returning what we have");
+          break;
+        }
+        throw err;
+      }
+
+      if (msg.stop_reason === "pause_turn") {
+        messages.push({ role: "assistant", content: msg.content });
+        continue;
+      }
+
+      rawText = collectText(msg.content);
+      break;
     }
-
-    rawText = collectText(msg.content);
-    break;
+  } finally {
+    clearTimeout(deadline);
   }
 
   const parsed = parseSellers(rawText, excludeHandles).filter(
