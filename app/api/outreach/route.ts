@@ -15,9 +15,17 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: MISSING_KEY_MESSAGE }, { status: 401 });
   }
 
-  const { seller }: { seller: Seller } = await req.json();
+  const {
+    seller,
+    senderName: rawSender,
+  }: { seller: Seller; senderName?: string } = await req.json();
 
-  const SYSTEM = `You are a real person writing a casual DM to a ${seller.city} food maker you genuinely follow. You know their account, you like their product, and you want to introduce them to Hotplate. Write like a human, not a rep. Return ONLY valid JSON. No markdown, no extra text.`;
+  // Sender name is a fill-in the team swaps in before sending — never hardcode
+  // a specific person. Defaults to a clearly-bracketed placeholder.
+  const senderName =
+    typeof rawSender === "string" && rawSender.trim()
+      ? rawSender.trim()
+      : "[your name]";
 
   const channel =
     seller.platform === "instagram"
@@ -25,10 +33,11 @@ export async function POST(req: NextRequest) {
       : seller.platform === "tiktok"
       ? "tiktok_dm"
       : "email";
-
   const isDM = channel === "instagram_dm" || channel === "tiktok_dm";
 
-  const userMsg = `Draft outreach for:
+  const SYSTEM =`You write short, warm outreach DMs on behalf of Hotplate's partnerships team to independent food makers you genuinely admire. Hotplate is a preordering / drops platform for pop-up food makers. Your goal is a friendly, personal opener that earns a reply and gently leads toward a quick chat — never a sales pitch. Sound like a real, down-to-earth person who actually eats at food popups, the way a thoughtful founder or partnerships lead texts. Return ONLY valid JSON. No markdown, no extra text.`;
+
+  const userMsg = `Draft an OPENER outreach message for:
 Name: ${seller.name}
 Sells: ${seller.what_they_sell}
 Current ordering: ${seller.current_order_method}
@@ -39,15 +48,20 @@ Metro area: ${seller.metro_area}
 ${seller.sample_post_caption ? `Recent post: "${seller.sample_post_caption}"` : ""}
 ${seller.notable_signals.length ? `Notable: ${seller.notable_signals.join(", ")}` : ""}
 
-Rules:
-- Channel: ${channel}
-- ${isDM ? "No subject, no formal greeting, no sign-off. Conversational, 2-4 sentences max. Short like a real DM." : "Include subject, 4-6 sentences, professional but warm."}
-- Open with a specific detail from their account that shows you actually follow them (the product, the drop, the caption vibe)
-- Name the friction they feel right now (managing DMs, people missing the story drop, chasing Venmo)
-- Mention Hotplate in one natural sentence, not a pitch sentence
-- Low-pressure close, like you're offering to help not sell something
-- No em dashes. No exclamation points unless it fits the brand voice. No filler phrases like "I wanted to reach out" or "I came across your page."
-- Sound like a text from someone who eats at food popups, not a sales email
+Write it in this voice — these are the patterns that actually book chats:
+- Channel: ${channel}. ${
+    isDM
+      ? "No subject, no formal greeting, no sign-off. 2-4 short sentences, reads like a real DM."
+      : "Short subject + 3-5 warm, casual sentences."
+  }
+- Open casually and introduce yourself by name: "hi! this is ${senderName}, i run partnerships at hotplate" (use "${senderName}" exactly as written, even if it's a bracketed placeholder).
+- One plain line on what Hotplate is (a preordering / drops platform for pop-up food makers). Not a pitch.
+- ONE specific, genuine compliment tied to THIS maker — their product, a recent post, selling out, their growth, their popup. Real, not generic flattery.
+- Do NOT name or cite any other maker/business accounts, and don't add a "we work with..." social-proof line. Keep it entirely about THEM.
+- Frame Hotplate as making their life easier (less DM juggling, no missed story drops, no chasing Venmo) — help, not a sale.
+- Close with a soft, low-pressure ask to connect: a quick chat or call, or offer to swing by their next popup or during prep — flexible and easygoing. Do NOT paste a calendar link in this first message.
+- Warm and a little enthusiastic: a couple of exclamation points and ONE emoji are good when they fit (match the emoji to their food when natural). Lowercase-casual is fine. Never stiff or corporate.
+- No em dashes. No buzzwords. Never "I wanted to reach out", "I came across your page", or anything that reads like a sales template.
 
 Return JSON:
 {
@@ -61,7 +75,7 @@ Return JSON:
   try {
     const msg = await anthropic.messages.create({
       model: "claude-sonnet-4-6",
-      max_tokens: 600,
+      max_tokens: 700,
       system: SYSTEM,
       messages: [{ role: "user", content: userMsg }],
     });
@@ -85,6 +99,13 @@ Return JSON:
     if (!result.body || !result.channel) {
       throw new Error("Invalid outreach shape");
     }
+
+    // Hard guarantee: the model still slips em/en dashes in despite the prompt
+    // rule, and outreach should carry none. Swap them for a casual comma.
+    const stripDashes = (t: string) =>
+      t.replace(/\s*[—–]\s*/g, ", ").replace(/,\s*,/g, ",").trim();
+    result.body = stripDashes(result.body);
+    if (result.subject) result.subject = stripDashes(result.subject);
 
     return Response.json(result);
   } catch (err) {
