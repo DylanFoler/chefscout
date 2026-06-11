@@ -14,10 +14,11 @@ export const runtime = "nodejs";
 // Live web search + reasoning can run well past the default. Generous ceiling.
 export const maxDuration = 300;
 
-// How many candidates to surface per scan. Each one gets auto-scored client-side,
-// so keep this modest to bound the follow-up scoring spend — and so the model
-// isn't forced to keep digging for an obscure Nth maker, which inflates latency.
-const TARGET_COUNT = 3;
+// Upper bound on candidates per scan. We aim to bring back at least 5 when the
+// region supports it (see the user prompt); this caps the slice and bounds the
+// client-side auto-scoring spend. Higher = more results but slower scans (more
+// web searches).
+const TARGET_COUNT = 7;
 
 const SYSTEM = `You are a sourcing analyst for Hotplate, a drops-based ordering platform for independent food makers. Your job: use web search to find REAL, currently-active independent food makers in a given region who would be high-value candidates to move onto Hotplate.
 
@@ -32,7 +33,7 @@ Hard rules:
 - Only include makers you ACTUALLY found via web search and can tie to a real, verifiable social handle. NEVER invent a business, handle, or follower count. If you cannot verify a real handle, leave that maker out.
 - Prefer Instagram; use the maker's real @handle exactly.
 - Every maker must genuinely operate in the requested region.
-- EXCLUDE anyone already selling on Hotplate — if their bio, posts, or link tree show a hotplate.com link, a "hotplate.com/<name>" store, or "order on Hotplate", skip them. We want PROSPECTS not yet on the platform, never existing Hotplate sellers.
+- CRITICAL — EXCLUDE anyone already on Hotplate. We want PROSPECTS, never existing Hotplate sellers. Before including ANY maker, check their Instagram bio, link-in-bio / Linktree, and recent posts (these usually appear in search results) for a Hotplate link or mention: a "hotplate.com/..." or "hotplate.co/..." store URL, a bare "hotplate.com" link, or wording like "order on Hotplate" / "drops on Hotplate". If you see ANY of these, drop them. When a maker is otherwise a strong fit but you can't tell whether they use Hotplate from the search results, run one quick "<their handle> hotplate" search to confirm before including them. (Example: a maker like @theinterruptedbaker whose Instagram bio links to a hotplate.com store must be excluded.)
 - Return ONLY a JSON array — no markdown, no prose, no code fences.`;
 
 function buildUserPrompt(
@@ -48,7 +49,7 @@ function buildUserPrompt(
 
   return `${where}
 
-Find up to ${TARGET_COUNT} makers that fit the profile.${exclude}
+Aim to return at least 5 qualifying makers (up to ${TARGET_COUNT}). Finding 5+ requires searching MULTIPLE angles — don't stop after the first 2-3 hits. Vary cuisine, format, and neighborhood across your searches, e.g.: instagram bakery preorders, cookie/pastry drops, popup or farmers-market vendors, tamales / empanadas / dumplings, home & cottage-food bakers, dessert pop-ups — and search specific neighborhoods within the region by name. Keep trying fresh angles until you have at least 5 that fit, or you've genuinely exhausted the options. Only return fewer than 5 if the region truly lacks enough makers. Quality still matters: never pad with off-profile makers or large chains, and never include anyone already on Hotplate.${exclude}
 
 Return a JSON array. Each element:
 {
@@ -162,6 +163,22 @@ function parseSellers(rawText: string, excludeHandles: string[]): Seller[] {
   return sellers;
 }
 
+// Belt-and-suspenders: drop a maker only when a field carries an actual Hotplate
+// store URL (hotplate.com/... or hotplate.co/...) — the reliable "they already
+// sell on Hotplate" signal. Deliberately NOT a bare "hotplate" substring: the
+// model often tags good prospects with notes like "not yet on Hotplate", and a
+// substring match wrongly drops them (it did — a real LA scan returned 2 makers
+// and both were nuked). The prompt remains the primary exclusion mechanism.
+const HOTPLATE_URL = /hotplate\.c(?:om|o)\b/i;
+function looksOnHotplate(s: Seller): boolean {
+  return [
+    s.website_or_linktree,
+    s.current_order_method,
+    s.sample_post_caption,
+    ...s.notable_signals,
+  ].some((f) => !!f && HOTPLATE_URL.test(f));
+}
+
 // Run the live web search and return validated, region-matched makers.
 async function searchMakers(
   region: string | null,
@@ -184,15 +201,22 @@ async function searchMakers(
     // and vetting — thinking-off returned nothing), low effort, searches capped.
     const stream = anthropic.messages.stream({
       model: "claude-sonnet-4-6",
-      max_tokens: 16000,
+      // Generous output budget: across a long search loop the thinking + tool
+      // blocks + the multi-maker JSON can exceed 16k and truncate (→ 0 parsed).
+      // Streaming supports large outputs without HTTP timeouts.
+      max_tokens: 32000,
       thinking: { type: "adaptive" },
-      output_config: { effort: "low" },
+      // Medium (not low): low effort returns a conservative ~2-3 makers regardless
+      // of search budget; medium explores more and commits to more candidates,
+      // which is what gets us to 5+. Costs latency — acceptable per the goal.
+      output_config: { effort: "medium" },
       system: SYSTEM,
       // Classic web search (no dynamic filtering). The _20260209 version runs
       // result-filtering CODE on every batch — ~23 server round-trips and ~5 min
       // per scan. _20250305 just reads results directly; max_uses actually caps
-      // the search count, cutting latency dramatically.
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 5 }],
+      // the search count. Raised to 12 to give room to find 5+ makers AND
+      // verify each isn't already on Hotplate (slower scans, but bounded).
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 10 }],
       messages,
     });
     const msg = await stream.finalMessage();
@@ -206,8 +230,9 @@ async function searchMakers(
     break;
   }
 
-  const parsed = parseSellers(rawText, excludeHandles);
-
+  const parsed = parseSellers(rawText, excludeHandles).filter(
+    (s) => !looksOnHotplate(s)
+  );
   // Never surface a candidate the active location filter would immediately hide.
   return locationQuery
     ? parsed.filter((s) => matchesLocation(s, locationQuery))

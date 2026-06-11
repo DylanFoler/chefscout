@@ -150,15 +150,16 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     // A scan is one backend request with no mid-flight progress, so animate a
     // smooth ease-out bar against elapsed time: it climbs toward ~92% and slows
     // as it goes (never stuck, never falsely "done"), then snaps to 100% when
-    // the response lands. Tuned for a typical ~50s live scan; instant cache hits
-    // return before the bar moves and jump straight to 100%.
+    // the response lands. Tuned for a typical ~90s live scan (we now search for
+    // 5+ makers and verify each against Hotplate); instant cache hits return
+    // before the bar moves and jump straight to 100%.
     const startedAt = Date.now();
     const phases = buildScanPhases(locationQuery);
     let phaseIdx = 0;
     setScanPhase(phases[0]);
     phaseRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAt;
-      setScanProgress(Math.min(92, 92 * (1 - Math.exp(-elapsed / 20000))));
+      setScanProgress(Math.min(92, 92 * (1 - Math.exp(-elapsed / 38000))));
       phaseIdx = (phaseIdx + 1) % phases.length;
       setScanPhase(phases[phaseIdx]);
     }, 400);
