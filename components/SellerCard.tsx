@@ -129,7 +129,11 @@ export default function SellerCard({ seller, score, loading, error, refreshFaile
           </div>
           <div className="text-zinc-400 text-sm mt-0.5 truncate">{seller.what_they_sell}</div>
           <div className="flex items-center gap-3 mt-1 text-xs text-zinc-500">
-            <span>{seller.followers.toLocaleString()} followers</span>
+            <span>
+              {seller.followers != null
+                ? `${seller.followers.toLocaleString()} followers`
+                : "follower count unknown"}
+            </span>
             <span>·</span>
             <span>{seller.neighborhood}</span>
             <span>·</span>

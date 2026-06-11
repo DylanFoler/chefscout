@@ -10,6 +10,9 @@ import { NextRequest } from "next/server";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
+// Sender identity for outreach openers — single source of truth. Change to rename.
+const SENDER_NAME = "Katherine";
+
 export async function POST(req: NextRequest) {
   if (MISSING_KEY) {
     return Response.json({ error: MISSING_KEY_MESSAGE }, { status: 401 });
@@ -47,42 +50,46 @@ export async function POST(req: NextRequest) {
       cateringHay
     );
 
-  const SYSTEM = `You write short, warm outreach DMs on behalf of Hotplate to independent food makers. Hotplate is the tool pop-up food makers use to run orders and pickups without all the scheduling back-and-forth. Your goal is a friendly, personal opener that earns a reply and gently offers a quick chat (and, when appropriate, a visit), never a sales pitch. Sound like a real, down-to-earth person who actually eats at food popups. Return ONLY valid JSON. No markdown, no extra text.`;
+  const SYSTEM = `You write short, warm outreach DMs as ${SENDER_NAME}, who runs partnerships at Hotplate, to independent food makers. Hotplate is the tool pop-up food makers use to run orders and pickups without all the scheduling back-and-forth. Your goal is a friendly, personal opener that earns a reply and gently offers a quick chat (and, when appropriate, a visit), never a sales pitch. Sound like a real, down-to-earth person who actually eats at food popups. Return ONLY valid JSON. No markdown, no extra text.`;
 
   const userMsg = `Draft an OPENER outreach message for:
 Name: ${seller.name}
 Sells: ${seller.what_they_sell}
 Current ordering: ${seller.current_order_method}
 Drop cadence: ${seller.drop_cadence}
-Platform: ${seller.platform} (${seller.followers.toLocaleString()} followers)
+Platform: ${seller.platform}${
+    seller.followers != null
+      ? ` (${seller.followers.toLocaleString()} followers)`
+      : ""
+  }
 Neighborhood: ${seller.neighborhood}
 Metro area: ${seller.metro_area}
 ${seller.sample_post_caption ? `Recent post: "${seller.sample_post_caption}"` : ""}
 ${seller.notable_signals.length ? `Notable: ${seller.notable_signals.join(", ")}` : ""}
 
 Match the tone, structure, capitalization, and warmth of this GOLD-STANDARD example exactly:
-"Hey! I'm with Hotplate, the tool a lot of Bay Area food folks use to run orders and pickups without all the scheduling back-and-forth. I just came across your mochi donuts and they look unreal, and it seems like they move pretty fast too! I'd love to help take some of the catering and event-order chaos off your plate so people aren't sliding into your DMs at all hours. Would you be up for hopping on a quick call to see if any of it might be useful? Or honestly, I'd love to just swing by your next pop-up and say hi if that's easier. :)"
+"Hi, I'm ${SENDER_NAME}! I run partnerships at Hotplate, the tool a lot of Bay Area food folks use to run orders and pickups without all the scheduling back-and-forth. I just came across your mochi donuts and they look unreal, and it seems like they move pretty fast too! I'd love to help take some of the friction off your plate so people aren't sliding into your DMs at all hours just to snag a preorder. Would you be up for hopping on a quick call to see if any of it might be useful? Or I'm happy to come swing by your next pop-up if that's easier. :)"
 
 Rules:
 - Channel: ${channel}. ${
     isDM
-      ? "No subject, no formal greeting line, no sign-off. 3-5 sentences, reads like a real DM."
+      ? "No subject, no separate greeting line, no sign-off. 3-5 sentences, reads like a real DM."
       : "Short subject + 3-5 warm, casual sentences."
   }
 - Use normal sentence case with proper capitalization, like the example: capitalize the start of sentences, "I", and proper nouns (Hotplate, ${metro || "the metro"}, DMs). Warm and polished, NOT all-lowercase.
-- Open with: "Hey! I'm with Hotplate, the tool a lot of ${folks} use to run orders and pickups without all the scheduling back-and-forth." Do NOT introduce yourself by name.
+- Open with: "Hi, I'm ${SENDER_NAME}! I run partnerships at Hotplate, the tool a lot of ${folks} use to run orders and pickups without all the scheduling back-and-forth." DO introduce yourself by name (${SENDER_NAME}).
 - ONE specific, genuine compliment on THEIR actual product (name it), plus a light nod to traction (moving fast / selling out / growing). Real, not generic flattery.
-- A help line framing Hotplate as taking friction off their plate so people aren't sliding into their DMs at all hours. ${
+- A help line framing Hotplate as taking friction off their plate so people aren't sliding into their DMs at all hours just to snag a preorder. ${
     doesCatering
       ? "This maker DOES catering / events, so you MAY reference taking the catering and event-order chaos off their plate."
       : "This maker does NOT appear to do catering or events, so do NOT mention catering or events. Focus on their real friction: juggling DM orders, chasing Venmo, and keeping up when drops sell out."
   }
 - Close with a soft, low-pressure ask. ${
     isBay
-      ? 'Offer BOTH options: "Would you be up for hopping on a quick call to see if any of it might be useful? Or honestly, I\'d love to just swing by your next pop-up and say hi if that\'s easier. :)"'
+      ? "Offer BOTH options: \"Would you be up for hopping on a quick call to see if any of it might be useful? Or I'm happy to come swing by your next pop-up if that's easier. :)\""
       : "Offer ONLY a quick call — we're based in the Bay Area and can't realistically swing by their location, so do NOT offer to visit or stop by in person. End warmly, e.g. \"Would you be up for hopping on a quick call to see if any of it might be useful? :)\""
   }
-- No name. No @handles or other accounts. No calendar link. No em dashes. No buzzwords. Don't use "I wanted to reach out" or anything that reads like a sales template.
+- No @handles or other accounts. No calendar link. No em dashes. No buzzwords. Don't use "I wanted to reach out" or anything that reads like a sales template.
 
 Return JSON:
 {

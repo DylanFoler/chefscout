@@ -56,7 +56,7 @@ Return a JSON array. Each element:
   "handle": "@theirhandle",
   "name": "Business name",
   "platform": "instagram" | "tiktok" | "other",
-  "followers": <integer best estimate from what you saw>,
+  "followers": <integer best estimate of follower count; use null ONLY if you truly can't tell, never guess 0>,
   "city": "City",
   "neighborhood": "Neighborhood or area",
   "metro_area": "Metro area",
@@ -132,10 +132,14 @@ function parseSellers(rawText: string, excludeHandles: string[]): Seller[] {
       r.platform === "tiktok" || r.platform === "other"
         ? r.platform
         : "instagram";
+    // Unknown follower count -> null (never a fake 0). A real, active candidate
+    // with literally 0 followers is implausible, so treat 0 as "couldn't tell".
     const followers =
-      typeof r.followers === "number" && Number.isFinite(r.followers)
-        ? Math.max(0, Math.round(r.followers))
-        : 0;
+      typeof r.followers === "number" &&
+      Number.isFinite(r.followers) &&
+      r.followers > 0
+        ? Math.round(r.followers)
+        : null;
     const signals = Array.isArray(r.notable_signals)
       ? r.notable_signals
           .filter((s): s is string => typeof s === "string" && !!s.trim())

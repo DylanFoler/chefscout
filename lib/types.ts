@@ -3,7 +3,7 @@ export type Seller = {
   handle: string;
   name: string;
   platform: "instagram" | "tiktok" | "other";
-  followers: number;
+  followers: number | null; // null = unknown/unverified; never 0-as-unknown
   city: string;
   neighborhood: string;
   metro_area: string;
