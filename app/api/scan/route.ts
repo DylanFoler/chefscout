@@ -183,17 +183,108 @@ function looksOnHotplate(s: Seller): boolean {
   ].some((f) => !!f && HOTPLATE_URL.test(f));
 }
 
-// --- Hotplate verification (deterministic, fast, parallel) -------------------
-// hotplate.com is a Next.js SSR app: a REAL store slug server-renders the store
-// name into og:title plus the maker's Instagram into the page data, while an
-// unknown slug renders the generic landing (og:title "Hotplate"). So we detect a
-// maker's Hotplate store over plain HTTP — no JS, no LLM — and confirm it's THEM
-// by matching the store's Instagram handle or its name. This replaces a slow LLM
-// web-search pass (~minutes) with a few parallel fetches (~seconds), which keeps
-// the scan under Vercel's 300s function limit while catching the makers the
-// discovery prompt misses.
+// --- Enrichment + Hotplate verification (deterministic, fast, parallel) ------
+// hotplate.com is a Next.js SSR app: a REAL store renders the store name into
+// og:title + the maker's Instagram into the page data; an unknown slug renders
+// the generic landing (og:title "Hotplate"). Instagram likewise renders the real
+// follower count into og:description ("4,989 Followers, ..."). So we enrich (real
+// followers) + verify (drop anyone already on Hotplate) over plain parallel HTTP —
+// no LLM — fast enough to stay under Vercel's 300s limit while being reliable.
 const HOTPLATE_LINK = /hotplate\.c(?:om|o)\/([a-z0-9_.-]+)/i;
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, "");
+
+// Global HTTP concurrency gate for the enrich/verify pass. Without it, a dense
+// region fires ~30+ parallel fetches at instagram.com / hotplate.com at once,
+// which rate-limits us (429) → retries → the scan ballooned to ~288s (over
+// Vercel's 300s cap). Capping concurrency keeps each request fast (first-try, no
+// 429) and bounds the whole pass to a few predictable seconds.
+function makeLimiter(max: number) {
+  let active = 0;
+  const queue: Array<() => void> = [];
+  return function run<T>(fn: () => Promise<T>): Promise<T> {
+    const exec = async (): Promise<T> => {
+      active++;
+      try {
+        return await fn();
+      } finally {
+        active--;
+        queue.shift()?.();
+      }
+    };
+    if (active < max) return exec();
+    return new Promise<void>((resolve) => queue.push(resolve)).then(exec);
+  };
+}
+const httpLimit = makeLimiter(6);
+
+// Title-case a resolved region for tagging ("new mexico" -> "New Mexico").
+function titleCaseRegion(region: string): string {
+  return region.replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
+// "4,989" -> 4989, "11K" -> 11000, "1.2M" -> 1200000, "1.2B" -> 1200000000.
+function parseFollowerCount(raw: string): number | null {
+  const m = raw.trim().match(/^([\d.,]+)\s*([KMB])?$/i);
+  if (!m) return null;
+  const n = parseFloat(m[1].replace(/,/g, ""));
+  if (!Number.isFinite(n)) return null;
+  const mult = { k: 1e3, m: 1e6, b: 1e9 }[m[2]?.toLowerCase() ?? ""] ?? 1;
+  return Math.round(n * mult);
+}
+
+const IG_UA =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
+
+// Real follower count for an Instagram handle. Primary source is the
+// web_profile_info JSON endpoint (small response, exact `edge_followed_by.count`,
+// the same data the app's web client reads); the public profile's og:description
+// ("X Followers, ...") is the fallback when JSON is unavailable. Returns null if
+// both are blocked / not found (caller hides the stat). Concurrency-limited.
+async function fetchInstagramFollowers(handle: string): Promise<number | null> {
+  const h = handle.replace(/^@/, "").trim().toLowerCase();
+  if (!h) return null;
+
+  // Primary: lightweight JSON API used by instagram.com's own web client.
+  try {
+    const count = await httpLimit(async () => {
+      const res = await fetch(
+        `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(h)}`,
+        {
+          signal: AbortSignal.timeout(6000),
+          headers: {
+            "user-agent": IG_UA,
+            "x-ig-app-id": "936619743392459",
+            accept: "application/json",
+          },
+        }
+      );
+      if (!res.ok) return null;
+      const data = await res.json().catch(() => null);
+      const c = data?.data?.user?.edge_followed_by?.count;
+      return typeof c === "number" && c > 0 ? Math.round(c) : null;
+    });
+    if (count != null) return count;
+  } catch {
+    // fall through to the HTML fallback
+  }
+
+  // Fallback: server-rendered og:description on the public profile page.
+  try {
+    return await httpLimit(async () => {
+      const res = await fetch(`https://www.instagram.com/${h}/`, {
+        signal: AbortSignal.timeout(6000),
+        headers: { "user-agent": IG_UA, "accept-language": "en-US,en;q=0.9" },
+      });
+      if (!res.ok) return null;
+      const html = await res.text();
+      const desc = html.match(/property="og:description"\s+content="([^"]*)"/i)?.[1];
+      const found = desc?.match(/([\d.,]+\s*[KMB]?)\s+Followers/i)?.[1];
+      return found ? parseFollowerCount(found) : null;
+    });
+  } catch {
+    return null;
+  }
+}
 
 // Likely Hotplate store slugs for a maker (handle- and name-derived), plus the
 // exact slug if their own bio link already points at a hotplate store.
@@ -210,57 +301,72 @@ function candidateSlugs(seller: Seller): {
   return { slugs: [...new Set(slugs)], fromLink };
 }
 
-// Fetch a hotplate.com store page; return { name, ig } if it's a real store, else
-// null (generic landing, non-200, or network error -> "couldn't confirm").
-async function fetchHotplateStore(
-  slug: string
-): Promise<{ name: string; ig: string | null } | null> {
-  try {
-    const res = await fetch(`https://www.hotplate.com/${slug}`, {
-      signal: AbortSignal.timeout(8000),
-      headers: { "user-agent": "Mozilla/5.0 (ChefScout)" },
-    });
-    if (!res.ok) return null;
-    const html = await res.text();
-    const og = html.match(/og:title"\s+content="([^"]*)"/i)?.[1]?.trim();
-    if (!og || og === "Hotplate") return null; // generic landing = no store here
-    const ig =
-      html.match(/instagram\.com\/([A-Za-z0-9_.]+)/i)?.[1]?.toLowerCase() ?? null;
-    return { name: og, ig };
-  } catch {
-    return null;
+// Fetch a hotplate.com store page; { name, ig } if it's a real store, else null.
+// Retries transient errors (429 / 5xx / timeout) so a blip can't fail-open into a
+// leak; a genuine 404 or the generic landing returns null immediately.
+type StoreResult = { name: string; ig: string | null } | null;
+async function fetchHotplateStore(slug: string): Promise<StoreResult> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const out = await httpLimit(async (): Promise<StoreResult | "retry"> => {
+        const res = await fetch(`https://www.hotplate.com/${slug}`, {
+          signal: AbortSignal.timeout(6000),
+          headers: { "user-agent": "Mozilla/5.0 (ChefScout)" },
+        });
+        if (res.status === 429 || res.status >= 500) return "retry"; // transient
+        if (!res.ok) return null; // 404 etc -> genuinely no store
+        const html = await res.text();
+        const og = html.match(/og:title"\s+content="([^"]*)"/i)?.[1]?.trim();
+        if (!og || og === "Hotplate") return null; // generic landing = no store
+        const ig =
+          html.match(/instagram\.com\/([A-Za-z0-9_.]+)/i)?.[1]?.toLowerCase() ??
+          null;
+        return { name: og, ig };
+      });
+      if (out === "retry") continue; // transient -> retry once
+      return out;
+    } catch {
+      // timeout / network -> loop retries once, then gives up
+    }
   }
+  return null;
 }
 
-// Returns the lowercased handles of candidates confirmed to be on Hotplate.
-// Every candidate and every slug probe runs in parallel (~a few seconds total).
-async function flagHotplateUsers(candidates: Seller[]): Promise<Set<string>> {
-  const flagged = new Set<string>();
-  if (candidates.length === 0) return flagged;
+// True if this maker already sells on Hotplate: a real hotplate.com/<slug> store
+// confirmed as them via their own bio link, the store's IG handle, or its name.
+async function isOnHotplate(s: Seller): Promise<boolean> {
+  const handle = s.handle.replace(/^@/, "").toLowerCase();
+  const nName = norm(s.name);
+  const { slugs, fromLink } = candidateSlugs(s);
+  const stores = await Promise.all(
+    slugs.map((slug) => fetchHotplateStore(slug).then((store) => ({ slug, store })))
+  );
+  return stores.some(({ slug, store }) => {
+    if (!store) return false;
+    if (slug === fromLink) return true; // it's the link in their own bio
+    if (store.ig && store.ig === handle) return true; // store IG == this maker
+    const t = norm(store.name); // store name ~ maker name
+    return !!t && !!nName && (t === nName || t.includes(nName) || nName.includes(t));
+  });
+}
 
-  await Promise.all(
+// Per-maker parallel enrich (real IG followers) + Hotplate verification. Every
+// maker and every probe runs concurrently, so wall-clock ~= the slowest maker.
+async function enrichAndVerify(
+  candidates: Seller[]
+): Promise<{ seller: Seller; onHotplate: boolean }[]> {
+  return Promise.all(
     candidates.map(async (s) => {
-      const handle = s.handle.replace(/^@/, "").toLowerCase();
-      const nName = norm(s.name);
-      const { slugs, fromLink } = candidateSlugs(s);
-      const stores = await Promise.all(
-        slugs.map((slug) =>
-          fetchHotplateStore(slug).then((store) => ({ slug, store }))
-        )
-      );
-      const onHotplate = stores.some(({ slug, store }) => {
-        if (!store) return false;
-        if (slug === fromLink) return true; // it's the link in their own bio
-        if (store.ig && store.ig === handle) return true; // store IG == this maker
-        const t = norm(store.name); // store name ~ maker name
-        return (
-          !!t && !!nName && (t === nName || t.includes(nName) || nName.includes(t))
-        );
-      });
-      if (onHotplate) flagged.add(s.handle.toLowerCase());
+      const [igFollowers, onHotplate] = await Promise.all([
+        s.platform === "instagram"
+          ? fetchInstagramFollowers(s.handle)
+          : Promise.resolve(null),
+        isOnHotplate(s),
+      ]);
+      const followers = igFollowers ?? s.followers ?? null;
+      return { seller: { ...s, followers }, onHotplate };
     })
   );
-  return flagged;
 }
 
 // Run the live web search and return validated, region-matched makers.
@@ -301,7 +407,7 @@ async function searchMakers(
       // the search count. Hotplate verification is now a fast parallel HTTP check
       // (not an LLM pass), so discovery gets the budget; capped at 8 to keep the
       // total scan comfortably under Vercel's 300s limit.
-      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 8 }],
+      tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 6 }],
       messages,
     });
     const msg = await stream.finalMessage();
@@ -318,22 +424,31 @@ async function searchMakers(
   const parsed = parseSellers(rawText, excludeHandles).filter(
     (s) => !looksOnHotplate(s)
   );
-  // Never surface a candidate the active location filter would immediately hide.
-  const regional = locationQuery
-    ? parsed.filter((s) => matchesLocation(s, locationQuery))
+
+  // Region tagging (Fix for state/region scans): instead of DROPPING makers whose
+  // city-level fields don't literally contain the searched region — which nukes
+  // state searches like "New Mexico" (a maker in Albuquerque has no "new mexico"
+  // string) — tag the region onto metro_area so this filter AND the frontend
+  // filter match. The model searched the exact region, so its makers belong there.
+  const regional = region
+    ? parsed.map((s) => {
+        if (matchesLocation(s, region)) return s; // already matches — don't double-tag
+        const label = titleCaseRegion(region);
+        const metro = s.metro_area?.trim();
+        return { ...s, metro_area: metro ? `${metro} (${label})` : label };
+      })
     : parsed;
 
-  // Reliable Hotplate gate: actively verify each remaining candidate isn't already
-  // on Hotplate (searches + fetches their links for a hotplate.com/<slug> store).
-  // The discovery prompt + URL filter miss some; this catches the discoverable ones.
-  const onHotplate = await flagHotplateUsers(regional);
-  if (onHotplate.size) {
-    console.log(
-      "[scan] excluded (already on Hotplate):",
-      [...onHotplate].join(", ")
-    );
+  // Enrich (real IG follower counts) + verify (drop anyone already on Hotplate),
+  // parallel per maker. This is the reliable Hotplate gate.
+  const verified = await enrichAndVerify(regional);
+  const excluded = verified
+    .filter((r) => r.onHotplate)
+    .map((r) => r.seller.handle);
+  if (excluded.length) {
+    console.log("[scan] excluded (already on Hotplate):", excluded.join(", "));
   }
-  return regional.filter((s) => !onHotplate.has(s.handle.toLowerCase()));
+  return verified.filter((r) => !r.onHotplate).map((r) => r.seller);
 }
 
 export async function POST(req: NextRequest) {
@@ -371,12 +486,32 @@ export async function POST(req: NextRequest) {
       (s) => !clientHas.has(s.handle.toLowerCase())
     );
 
-    // Any unshown cached makers for this region → serve them instantly, no web
-    // call. After a reload the board is empty, so re-scanning a region you've
-    // already scanned returns immediately. Once they're on the board they're
-    // excluded, and the scan falls through to a fresh live search for new ones.
+    // Serve unshown cached makers — but RE-VERIFY against Hotplate first, never
+    // trust the cache blindly (a stale entry, or a maker who joined Hotplate since
+    // we cached them, must never leak). Verify-only (no IG re-enrich) keeps the
+    // cache path fast. Prune any newly-on-Hotplate makers from the stored entry.
     if (unshown.length > 0) {
-      return Response.json({ found: unshown, cached: true });
+      const checked = await Promise.all(
+        unshown.map((s) => isOnHotplate(s).then((on) => ({ s, on })))
+      );
+      const nowOn = new Set(
+        checked.filter((c) => c.on).map((c) => c.s.handle.toLowerCase())
+      );
+      if (nowOn.size) {
+        console.log(
+          "[scan] excluded from cache (already on Hotplate):",
+          [...nowOn].join(", ")
+        );
+        entry.sellers = entry.sellers.filter(
+          (s) => !nowOn.has(s.handle.toLowerCase())
+        );
+        await regionStore.set(region, entry);
+      }
+      const clean = checked.filter((c) => !c.on).map((c) => c.s);
+      if (clean.length > 0) {
+        return Response.json({ found: clean, cached: true });
+      }
+      // else: cache held only on-Hotplate makers — fall through to a live search.
     }
 
     // Need fresh makers. Exclude everything the client already has AND everything

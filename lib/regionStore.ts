@@ -8,10 +8,10 @@ import type { Seller } from "@/lib/types";
 export type RegionEntry = { sellers: Seller[]; seen: string[] };
 
 // Namespaced + versioned: avoids collisions on a shared Upstash DB and lets the
-// stored shape evolve without reading stale keys. Bumped to v3 to abandon
-// pre-fix cached entries (Hotplate-seller leaks, and makers cached with a fake
-// followers:0); fresh scans repopulate with the current logic.
-const keyFor = (region: string) => `chefscout:region:v3:${region}`;
+// stored shape evolve without reading stale keys. Bumped to v4 to abandon
+// pre-fix entries — stale Hotplate-seller leaks (the cache served them unverified)
+// and makers cached before real follower enrichment; fresh scans repopulate.
+const keyFor = (region: string) => `chefscout:region:v4:${region}`;
 
 // Regions go stale (makers come and go); expire cached discovery after 7 days.
 const TTL_SECONDS = 60 * 60 * 24 * 7;
