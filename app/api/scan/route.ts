@@ -1,5 +1,6 @@
 import { Seller } from "@/lib/types";
 import { resolveLocation, matchesLocation } from "@/lib/location";
+import { regionStore } from "@/lib/regionStore";
 import {
   anthropic,
   MISSING_KEY,
@@ -213,13 +214,6 @@ async function searchMakers(
     : parsed;
 }
 
-// Per-region discovery cache. Holds every maker we've ever surfaced for a region
-// (so repeat scans never repeat one) and lets a re-scan return instantly when we
-// still have makers the client isn't showing. In-memory, per server process —
-// it persists across requests but resets on restart.
-type RegionCache = { sellers: Seller[]; seen: Set<string> };
-const regionCache = new Map<string, RegionCache>();
-
 export async function POST(req: NextRequest) {
   if (MISSING_KEY) {
     return Response.json(
@@ -243,10 +237,11 @@ export async function POST(req: NextRequest) {
       return Response.json({ found, cached: false });
     }
 
-    const entry = regionCache.get(region) ?? {
-      sellers: [],
-      seen: new Set<string>(),
-    };
+    // Per-region discovery cache (persistent via Upstash in prod, in-memory
+    // locally — see lib/regionStore). `seen` is stored as an array (Redis
+    // serializes JSON); rebuild a Set for O(1) dedupe.
+    const entry = (await regionStore.get(region)) ?? { sellers: [], seen: [] };
+    const seenSet = new Set(entry.seen);
     const clientHas = new Set(excludeHandles.map((h) => h.toLowerCase()));
 
     // Makers we already discovered for this region that aren't on the client's board.
@@ -264,18 +259,19 @@ export async function POST(req: NextRequest) {
 
     // Need fresh makers. Exclude everything the client already has AND everything
     // we've ever surfaced for this region, so a repeat scan never repeats a maker.
-    const exclude = Array.from(new Set([...excludeHandles, ...entry.seen]));
+    const exclude = Array.from(new Set([...excludeHandles, ...seenSet]));
     const fresh = await searchMakers(region, locationQuery, exclude);
 
     // Remember the new ones for next time.
     for (const s of fresh) {
       const key = s.handle.toLowerCase();
-      if (!entry.seen.has(key)) {
-        entry.seen.add(key);
+      if (!seenSet.has(key)) {
+        seenSet.add(key);
         entry.sellers.push(s);
       }
     }
-    regionCache.set(region, entry);
+    entry.seen = Array.from(seenSet);
+    await regionStore.set(region, entry);
 
     const found = [...unshown, ...fresh].slice(0, TARGET_COUNT);
     return Response.json({ found, cached: false });
