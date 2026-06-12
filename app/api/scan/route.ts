@@ -479,7 +479,11 @@ async function discoverOnce(
       msg = await stream.finalMessage();
     } catch (err) {
       if (signal.aborted) return ""; // deadline hit — this pass yields nothing
-      throw err;
+      // A transient API error (overload/rate-limit/network) in ONE pass must not
+      // 500 the whole scan — degrade to empty so the other parallel pass carries
+      // it (same philosophy as the abort path). Logged for visibility.
+      console.error("[scan] discovery pass failed, treating as empty:", err);
+      return "";
     }
 
     if (msg.stop_reason === "pause_turn") {

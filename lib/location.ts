@@ -88,17 +88,35 @@ const METRO_TO_STATE: Record<string, string> = {
   providence: "rhode island", buffalo: "new york",
 };
 
-// Regions whose metro legitimately spans multiple states — disable the state
-// check entirely (keep all) so we never drop a real local just over a state line.
-const MULTI_STATE_METROS = new Set([
-  "new york", "nyc", "washington", "dc", "dmv", "kansas city", "portland",
-  "memphis", "cincinnati", "st louis", "saint louis", "philadelphia", "philly",
-  "charlotte", "louisville", "omaha", "chattanooga", "tahoe",
-]);
+// Regions whose metro legitimately spans multiple states — list the ACCEPTABLE
+// states so a real local across a state line is kept (e.g. a Jersey City maker for
+// a "New York" scan) WHILE a maker from a clearly unrelated state (a Houston bakery
+// for "New York") is still dropped. (An earlier version disabled the check entirely
+// for these regions, which let the Houston bakery through.)
+const METRO_STATES: Record<string, string[]> = {
+  "new york": ["new york", "new jersey", "connecticut"],
+  nyc: ["new york", "new jersey", "connecticut"],
+  washington: ["district of columbia", "maryland", "virginia"],
+  dc: ["district of columbia", "maryland", "virginia"],
+  dmv: ["district of columbia", "maryland", "virginia"],
+  "kansas city": ["missouri", "kansas"],
+  portland: ["oregon", "washington"],
+  memphis: ["tennessee", "mississippi", "arkansas"],
+  cincinnati: ["ohio", "kentucky", "indiana"],
+  "st louis": ["missouri", "illinois"],
+  "saint louis": ["missouri", "illinois"],
+  philadelphia: ["pennsylvania", "new jersey", "delaware"],
+  philly: ["pennsylvania", "new jersey", "delaware"],
+  charlotte: ["north carolina", "south carolina"],
+  louisville: ["kentucky", "indiana"],
+  omaha: ["nebraska", "iowa"],
+  chattanooga: ["tennessee", "georgia"],
+  tahoe: ["california", "nevada"],
+};
 
-// The canonical state for a (raw) region string, or null if we can't resolve it.
-export function regionState(region: string): string | null {
-  const loc = resolveLocation(region);
+// The single canonical state for a resolved region string (state name/abbrev, a
+// state token within it, else a known metro/city), or null.
+function singleRegionState(loc: string): string | null {
   // 1. The whole region is a state name/abbrev ("new mexico", "co").
   const whole = toState(loc);
   if (whole) return whole;
@@ -111,6 +129,15 @@ export function regionState(region: string): string | null {
   return METRO_TO_STATE[loc] ?? null;
 }
 
+// The set of states acceptable for a (raw) region, or null if we can't resolve it
+// (caller keeps everything when null).
+export function regionStates(region: string): Set<string> | null {
+  const loc = resolveLocation(region);
+  if (METRO_STATES[loc]) return new Set(METRO_STATES[loc]);
+  const s = singleRegionState(loc);
+  return s ? new Set([s]) : null;
+}
+
 // The canonical state from an IG business-address city string ("Houston, Texas"
 // or "Houston, TX"), or null when it's city-only / unrecognized.
 export function cityState(igCity: string | null | undefined): string | null {
@@ -120,19 +147,18 @@ export function cityState(igCity: string | null | undefined): string | null {
   return toState(parts[parts.length - 1]);
 }
 
-// True only on a confident single-state mismatch between the maker's real city
-// and the searched region. Conservative — false (keep) whenever we can't be sure:
-// no IG city, region not resolvable to a state, multi-state metro, or a city-only
-// IG string.
+// True only on a confident state mismatch between the maker's real city and the
+// searched region. Conservative — false (keep) whenever we can't be sure: no IG
+// city, region not resolvable to a state, or a city-only IG string. Multi-state
+// metros accept any of their states.
 export function geoContradicts(
   region: string,
   igCity: string | null | undefined
 ): boolean {
   if (!igCity) return false;
-  if (MULTI_STATE_METROS.has(resolveLocation(region))) return false;
-  const rs = regionState(region);
-  if (!rs) return false;
+  const states = regionStates(region);
+  if (!states) return false;
   const cs = cityState(igCity);
   if (!cs) return false;
-  return cs !== rs;
+  return !states.has(cs);
 }
