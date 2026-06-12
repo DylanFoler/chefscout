@@ -8,11 +8,12 @@ import type { Seller } from "@/lib/types";
 export type RegionEntry = { sellers: Seller[]; seen: string[] };
 
 // Namespaced + versioned: avoids collisions on a shared Upstash DB and lets the
-// stored shape evolve without reading stale keys. Bumped to v5 to abandon entries
-// cached before the slug-suffix fix — a maker like @soupbelly_atl whose Hotplate
-// store is hotplate.com/soupbelly slipped past the old slug derivation and got
-// cached; fresh scans repopulate using the suffix-stripping verification.
-const keyFor = (region: string) => `chefscout:region:v5:${region}`;
+// stored shape evolve without reading stale keys. Bumped to v6 to abandon entries
+// cached before the region-accuracy fix — out-of-region makers the discovery model
+// name-dropped (e.g. @koffeteria, a Houston bakery, cached under Denver/Atlanta)
+// got stored before the geo check existed; fresh scans repopulate geo-filtered.
+// (Geo is stable, so the live path filters before caching — no cache-hit re-check.)
+const keyFor = (region: string) => `chefscout:region:v6:${region}`;
 
 // Regions go stale (makers come and go); expire cached discovery after 7 days.
 const TTL_SECONDS = 60 * 60 * 24 * 7;
