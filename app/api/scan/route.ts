@@ -1,5 +1,5 @@
 import { Seller } from "@/lib/types";
-import { resolveLocation, matchesLocation } from "@/lib/location";
+import { resolveLocation, matchesLocation, geoContradicts } from "@/lib/location";
 import { regionStore } from "@/lib/regionStore";
 import {
   anthropic,
@@ -32,7 +32,7 @@ The profile we want:
 Hard rules:
 - Only include makers you ACTUALLY found via web search and can tie to a real, verifiable social handle. NEVER invent a business, handle, or follower count. If you cannot verify a real handle, leave that maker out.
 - Prefer Instagram; use the maker's real @handle exactly.
-- Every maker must genuinely operate in the requested region.
+- Every maker must be HOME-BASED in the requested region — their own kitchen/storefront/popup operation physically located there. Do NOT include nationally-famous makers headquartered in another city just because they're well-known or you recall them; a maker featured on "best of" lists for a different metro does not belong here. Set "city" to the maker's real home city within the region (not a city they merely ship to or guest-popup in).
 - CRITICAL — EXCLUDE anyone already on Hotplate. We want PROSPECTS, never existing Hotplate sellers. Before including ANY maker, check their Instagram bio, link-in-bio / Linktree, and recent posts (these usually appear in search results) for a Hotplate link or mention: a "hotplate.com/..." or "hotplate.co/..." store URL, a bare "hotplate.com" link, or wording like "order on Hotplate" / "drops on Hotplate". If you see ANY of these, drop them. When a maker is otherwise a strong fit but you can't tell whether they use Hotplate from the search results, run one quick "<their handle> hotplate" search to confirm before including them. (Example: a maker like @theinterruptedbaker whose Instagram bio links to a hotplate.com store must be excluded.)
 - Return ONLY a JSON array — no markdown, no prose, no code fences.`;
 
@@ -246,18 +246,21 @@ function parseFollowerCount(raw: string): number | null {
 const IG_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-// Real follower count for an Instagram handle. Primary source is the
-// web_profile_info JSON endpoint (small response, exact `edge_followed_by.count`,
-// the same data the app's web client reads); the public profile's og:description
-// ("X Followers, ...") is the fallback when JSON is unavailable. Returns null if
-// both are blocked / not found (caller hides the stat). Concurrency-limited.
-async function fetchInstagramFollowers(handle: string): Promise<number | null> {
+type IgProfile = { followers: number | null; igCity: string | null };
+
+// Instagram profile facts for a handle. Primary source is the web_profile_info
+// JSON endpoint (small response, exact `edge_followed_by.count` PLUS the maker's
+// real `business_address_json.city_name` like "Houston, Texas" for business
+// accounts — used for region verification); the public profile's og:description
+// ("X Followers, ...") is the follower fallback when JSON is unavailable (no
+// address there). Returns nulls if blocked / not found. Concurrency-limited.
+async function fetchInstagramProfile(handle: string): Promise<IgProfile> {
   const h = handle.replace(/^@/, "").trim().toLowerCase();
-  if (!h) return null;
+  if (!h) return { followers: null, igCity: null };
 
   // Primary: lightweight JSON API used by instagram.com's own web client.
   try {
-    const count = await httpLimit(async () => {
+    const profile = await httpLimit(async (): Promise<IgProfile | null> => {
       const res = await fetch(
         `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(h)}`,
         {
@@ -271,17 +274,25 @@ async function fetchInstagramFollowers(handle: string): Promise<number | null> {
       );
       if (!res.ok) return null;
       const data = await res.json().catch(() => null);
-      const c = data?.data?.user?.edge_followed_by?.count;
-      return typeof c === "number" && c > 0 ? Math.round(c) : null;
+      const user = data?.data?.user;
+      if (!user) return null;
+      const c = user.edge_followed_by?.count;
+      const followers =
+        typeof c === "number" && c > 0 ? Math.round(c) : null;
+      // Ground-truth location: only the structured business address (never the
+      // noisy free-text bio) is trusted to authorize a region drop later.
+      const city = user.business_address_json?.city_name;
+      const igCity = typeof city === "string" && city.trim() ? city.trim() : null;
+      return { followers, igCity };
     });
-    if (count != null) return count;
+    if (profile && (profile.followers != null || profile.igCity)) return profile;
   } catch {
     // fall through to the HTML fallback
   }
 
-  // Fallback: server-rendered og:description on the public profile page.
+  // Fallback: server-rendered og:description on the public profile page (no city).
   try {
-    return await httpLimit(async () => {
+    const followers = await httpLimit(async () => {
       const res = await fetch(`https://www.instagram.com/${h}/`, {
         signal: AbortSignal.timeout(6000),
         headers: { "user-agent": IG_UA, "accept-language": "en-US,en;q=0.9" },
@@ -292,8 +303,9 @@ async function fetchInstagramFollowers(handle: string): Promise<number | null> {
       const found = desc?.match(/([\d.,]+\s*[KMB]?)\s+Followers/i)?.[1];
       return found ? parseFollowerCount(found) : null;
     });
+    return { followers, igCity: null };
   } catch {
-    return null;
+    return { followers: null, igCity: null };
   }
 }
 
@@ -404,21 +416,23 @@ async function isOnHotplate(s: Seller): Promise<boolean> {
   });
 }
 
-// Per-maker parallel enrich (real IG followers) + Hotplate verification. Every
-// maker and every probe runs concurrently, so wall-clock ~= the slowest maker.
+// Per-maker parallel enrich (real IG followers + real city) + Hotplate
+// verification. Every maker and every probe runs concurrently, so wall-clock ~=
+// the slowest maker. `igCity` is transient (used only for the live-path region
+// check in searchMakers) — it is not stored on the Seller.
 async function enrichAndVerify(
   candidates: Seller[]
-): Promise<{ seller: Seller; onHotplate: boolean }[]> {
+): Promise<{ seller: Seller; onHotplate: boolean; igCity: string | null }[]> {
   return Promise.all(
     candidates.map(async (s) => {
-      const [igFollowers, onHotplate] = await Promise.all([
+      const [profile, onHotplate] = await Promise.all([
         s.platform === "instagram"
-          ? fetchInstagramFollowers(s.handle)
-          : Promise.resolve(null),
+          ? fetchInstagramProfile(s.handle)
+          : Promise.resolve<IgProfile>({ followers: null, igCity: null }),
         isOnHotplate(s),
       ]);
-      const followers = igFollowers ?? s.followers ?? null;
-      return { seller: { ...s, followers }, onHotplate };
+      const followers = profile.followers ?? s.followers ?? null;
+      return { seller: { ...s, followers }, onHotplate, igCity: profile.igCity };
     })
   );
 }
@@ -533,16 +547,35 @@ async function searchMakers(
       })
     : parsed;
 
-  // Enrich (real IG follower counts) + verify (drop anyone already on Hotplate),
-  // parallel per maker. This is the reliable Hotplate gate.
+  // Enrich (real IG follower counts + real city) + verify (drop anyone already on
+  // Hotplate), parallel per maker. This is the reliable Hotplate gate.
   const verified = await enrichAndVerify(regional);
-  const excluded = verified
+
+  const onHotplate = verified
     .filter((r) => r.onHotplate)
     .map((r) => r.seller.handle);
-  if (excluded.length) {
-    console.log("[scan] excluded (already on Hotplate):", excluded.join(", "));
+  if (onHotplate.length) {
+    console.log("[scan] excluded (already on Hotplate):", onHotplate.join(", "));
   }
-  return verified.filter((r) => !r.onHotplate).map((r) => r.seller);
+
+  // Region accuracy: drop a maker whose Instagram business address is in a
+  // different STATE than the searched region (e.g. a Houston bakery name-dropped
+  // for a "Denver" scan). Conservative — only fires on a confident mismatch
+  // (see geoContradicts); regions it can't resolve / multi-state metros keep all.
+  const outOfRegion = region
+    ? verified.filter((r) => !r.onHotplate && geoContradicts(region, r.igCity))
+    : [];
+  if (outOfRegion.length) {
+    console.log(
+      "[scan] excluded (out of region):",
+      outOfRegion.map((r) => `${r.seller.handle} [${r.igCity}]`).join(", ")
+    );
+  }
+  const dropped = new Set(outOfRegion.map((r) => r.seller.handle.toLowerCase()));
+
+  return verified
+    .filter((r) => !r.onHotplate && !dropped.has(r.seller.handle.toLowerCase()))
+    .map((r) => r.seller);
 }
 
 export async function POST(req: NextRequest) {
