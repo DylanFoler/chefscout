@@ -138,6 +138,19 @@ export function regionStates(region: string): Set<string> | null {
   return s ? new Set([s]) : null;
 }
 
+// Curated home cities for famous makers the discovery model repeatedly name-drops
+// into the WRONG region and whose live Instagram fetch is unreliable from Vercel
+// (login-walled), so the live geo check intermittently misses them. Deterministic
+// backstop keyed by lowercased handle (no @). Geo-aware via geoContradicts —
+// @koffeteria is correctly KEPT for a Houston/Texas scan and dropped everywhere
+// else. Extend as new repeat offenders surface in audits.
+const KNOWN_MAKER_CITY: Record<string, string> = {
+  koffeteria: "Houston, Texas",
+};
+export function knownMakerCity(handle: string): string | null {
+  return KNOWN_MAKER_CITY[handle.replace(/^@/, "").trim().toLowerCase()] ?? null;
+}
+
 // The canonical state from an IG business-address city string ("Houston, Texas"
 // or "Houston, TX"), or null when it's city-only / unrecognized.
 export function cityState(igCity: string | null | undefined): string | null {

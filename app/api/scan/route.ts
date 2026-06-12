@@ -1,5 +1,10 @@
 import { Seller } from "@/lib/types";
-import { resolveLocation, matchesLocation, geoContradicts } from "@/lib/location";
+import {
+  resolveLocation,
+  matchesLocation,
+  geoContradicts,
+  knownMakerCity,
+} from "@/lib/location";
 import { regionStore } from "@/lib/regionStore";
 import {
   anthropic,
@@ -258,36 +263,43 @@ async function fetchInstagramProfile(handle: string): Promise<IgProfile> {
   const h = handle.replace(/^@/, "").trim().toLowerCase();
   if (!h) return { followers: null, igCity: null };
 
-  // Primary: lightweight JSON API used by instagram.com's own web client.
-  try {
-    const profile = await httpLimit(async (): Promise<IgProfile | null> => {
-      const res = await fetch(
-        `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(h)}`,
-        {
-          signal: AbortSignal.timeout(6000),
-          headers: {
-            "user-agent": IG_UA,
-            "x-ig-app-id": "936619743392459",
-            accept: "application/json",
-          },
-        }
-      );
-      if (!res.ok) return null;
-      const data = await res.json().catch(() => null);
-      const user = data?.data?.user;
-      if (!user) return null;
-      const c = user.edge_followed_by?.count;
-      const followers =
-        typeof c === "number" && c > 0 ? Math.round(c) : null;
-      // Ground-truth location: only the structured business address (never the
-      // noisy free-text bio) is trusted to authorize a region drop later.
-      const city = user.business_address_json?.city_name;
-      const igCity = typeof city === "string" && city.trim() ? city.trim() : null;
-      return { followers, igCity };
-    });
-    if (profile && (profile.followers != null || profile.igCity)) return profile;
-  } catch {
-    // fall through to the HTML fallback
+  // Primary: lightweight JSON API used by instagram.com's own web client. Retry
+  // a few times — Instagram login-walls datacenter (Vercel) IPs PROBABILISTICALLY,
+  // so a retry often succeeds where the first attempt got a login page. This
+  // matters for the region check: a missed business address means we can't catch
+  // an out-of-region maker (e.g. @koffeteria, Houston, leaking into other scans).
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const profile = await httpLimit(async (): Promise<IgProfile | null> => {
+        const res = await fetch(
+          `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(h)}`,
+          {
+            signal: AbortSignal.timeout(6000),
+            headers: {
+              "user-agent": IG_UA,
+              "x-ig-app-id": "936619743392459",
+              accept: "application/json",
+            },
+          }
+        );
+        if (!res.ok) return null;
+        const data = await res.json().catch(() => null);
+        const user = data?.data?.user;
+        if (!user) return null;
+        const c = user.edge_followed_by?.count;
+        const followers =
+          typeof c === "number" && c > 0 ? Math.round(c) : null;
+        // Ground-truth location: only the structured business address (never the
+        // noisy free-text bio) is trusted to authorize a region drop later.
+        const city = user.business_address_json?.city_name;
+        const igCity =
+          typeof city === "string" && city.trim() ? city.trim() : null;
+        return { followers, igCity };
+      });
+      if (profile && (profile.followers != null || profile.igCity)) return profile;
+    } catch {
+      // retry, then fall through to the HTML fallback
+    }
   }
 
   // Fallback: server-rendered og:description on the public profile page (no city).
@@ -432,7 +444,11 @@ async function enrichAndVerify(
         isOnHotplate(s),
       ]);
       const followers = profile.followers ?? s.followers ?? null;
-      return { seller: { ...s, followers }, onHotplate, igCity: profile.igCity };
+      // Live IG address first; fall back to the curated home city for famous
+      // repeat offenders whose live fetch login-walls (keeps the geo check
+      // flawless for them regardless of IG fetch luck).
+      const igCity = profile.igCity ?? knownMakerCity(s.handle);
+      return { seller: { ...s, followers }, onHotplate, igCity };
     })
   );
 }
@@ -622,27 +638,37 @@ export async function POST(req: NextRequest) {
     // we cached them, must never leak). Verify-only (no IG re-enrich) keeps the
     // cache path fast. Prune any newly-on-Hotplate makers from the stored entry.
     if (unshown.length > 0) {
+      // Re-verify Hotplate (status can change since caching) AND re-apply the geo
+      // backstop for curated repeat offenders (deterministic, no fetch) — so a
+      // cached out-of-region maker like @koffeteria self-heals on the next hit
+      // instead of needing a cache-key bump. (General geo was already applied on
+      // the live path before caching; only curated offenders can be stale here.)
       const checked = await Promise.all(
-        unshown.map((s) => isOnHotplate(s).then((on) => ({ s, on })))
+        unshown.map((s) =>
+          isOnHotplate(s).then((onHotplate) => ({
+            s,
+            drop: onHotplate || geoContradicts(region, knownMakerCity(s.handle)),
+          }))
+        )
       );
-      const nowOn = new Set(
-        checked.filter((c) => c.on).map((c) => c.s.handle.toLowerCase())
+      const dropped = new Set(
+        checked.filter((c) => c.drop).map((c) => c.s.handle.toLowerCase())
       );
-      if (nowOn.size) {
+      if (dropped.size) {
         console.log(
-          "[scan] excluded from cache (already on Hotplate):",
-          [...nowOn].join(", ")
+          "[scan] excluded from cache (on Hotplate / out of region):",
+          [...dropped].join(", ")
         );
         entry.sellers = entry.sellers.filter(
-          (s) => !nowOn.has(s.handle.toLowerCase())
+          (s) => !dropped.has(s.handle.toLowerCase())
         );
         await regionStore.set(region, entry);
       }
-      const clean = checked.filter((c) => !c.on).map((c) => c.s);
+      const clean = checked.filter((c) => !c.drop).map((c) => c.s);
       if (clean.length > 0) {
         return Response.json({ found: clean, cached: true });
       }
-      // else: cache held only on-Hotplate makers — fall through to a live search.
+      // else: cache held only excluded makers — fall through to a live search.
     }
 
     // Need fresh makers. Exclude everything the client already has AND everything
