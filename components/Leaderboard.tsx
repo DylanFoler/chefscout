@@ -3,6 +3,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Seller, ScoreResult } from "@/lib/types";
 import { matchesLocation } from "@/lib/location";
+import { exportScanPdf } from "@/lib/exportPdf";
 import SellerCard from "./SellerCard";
 
 type SellerState = {
@@ -88,6 +89,7 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
   const [locationQuery, setLocationQuery] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
   const [listCopied, setListCopied] = useState(false);
+  const [pdfBusy, setPdfBusy] = useState(false);
 
   const scoreOne = useCallback(async (seller: Seller) => {
     if (inFlight.current.has(seller.id)) return;
@@ -289,18 +291,37 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
     }
   }
 
+  async function downloadPdf() {
+    setPdfBusy(true);
+    try {
+      const rows = displayed.map((s) => ({
+        seller: s,
+        score: states[s.id]?.score ?? null,
+      }));
+      await exportScanPdf(rows, {
+        region: locationQuery.trim(),
+        search: searchQuery.trim(),
+        count: displayed.length,
+      });
+    } catch (err) {
+      console.error("PDF export failed:", err);
+    } finally {
+      setPdfBusy(false);
+    }
+  }
+
   return (
     <div className="space-y-4">
       {/* Auth / config error banner */}
       {authError && (
-        <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-700 bg-amber-950/60 px-4 py-3">
-          <div className="text-sm text-amber-200">
+        <div className="flex items-start justify-between gap-3 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3">
+          <div className="text-sm text-amber-800">
             <span className="font-semibold">Couldn&apos;t reach Claude.</span>{" "}
             {authError}
           </div>
           <button
             onClick={() => setAuthError(null)}
-            className="shrink-0 text-amber-400 hover:text-amber-200 text-base leading-none"
+            className="shrink-0 text-amber-600 hover:text-amber-800 text-base leading-none"
             aria-label="Dismiss"
           >
             ×
@@ -314,11 +335,11 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
           <button
             onClick={scoreAll}
             disabled={scoring || scanning}
-            className="px-5 py-2 rounded-full bg-white text-black text-sm font-semibold hover:bg-zinc-200 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
+            className="px-5 py-2 rounded-full bg-coral text-white text-sm font-semibold hover:bg-coral-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2"
           >
             {scoring ? (
               <>
-                <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-400 border-t-zinc-800 animate-spin" />
+                <div className="w-3.5 h-3.5 rounded-full border-2 border-white/50 border-t-white animate-spin" />
                 Scoring...
               </>
             ) : anyScored ? (
@@ -332,19 +353,19 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         <button
           onClick={runScan}
           disabled={scanning || scoring}
-          className="px-5 py-2 rounded-full bg-zinc-800 text-white text-sm font-semibold hover:bg-zinc-700 border border-zinc-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 min-w-45"
+          className="px-5 py-2 rounded-full bg-white text-ink text-sm font-semibold hover:border-coral border border-sand disabled:opacity-50 disabled:cursor-not-allowed transition-colors flex items-center gap-2 min-w-45"
         >
           {scanning ? (
             <>
-              <div className="w-3.5 h-3.5 rounded-full border-2 border-zinc-600 border-t-zinc-300 animate-spin shrink-0" />
-              <span className="text-zinc-400 text-xs font-normal">
+              <div className="w-3.5 h-3.5 rounded-full border-2 border-sand border-t-coral animate-spin shrink-0" />
+              <span className="text-muted text-xs font-normal">
                 Scanning...
               </span>
             </>
           ) : (
             <>
               <svg
-                className="w-3.5 h-3.5 text-zinc-400 shrink-0"
+                className="w-3.5 h-3.5 text-muted shrink-0"
                 fill="none"
                 stroke="currentColor"
                 viewBox="0 0 24 24"
@@ -365,8 +386,8 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
           <span
             className={`text-xs px-3 py-1 rounded-full border ${
               scanResult.startsWith("Found")
-                ? "text-emerald-400 border-emerald-800 bg-emerald-950"
-                : "text-zinc-500 border-zinc-800"
+                ? "text-coral border-coral/40 bg-coral/10"
+                : "text-muted border-sand"
             }`}
           >
             {scanResult}
@@ -377,7 +398,7 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         )}
 
         {anyScored && !scoring && !scanResult && !filtersActive && (
-          <span className="text-xs text-zinc-500">
+          <span className="text-xs text-muted">
             Sorted by score — click any card to expand
           </span>
         )}
@@ -387,14 +408,14 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
       {scanning && (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs">
-            <span className="text-zinc-400 truncate pr-2">{scanPhase}</span>
-            <span className="text-zinc-500 tabular-nums shrink-0">
+            <span className="text-muted truncate pr-2">{scanPhase}</span>
+            <span className="text-muted tabular-nums shrink-0">
               {Math.round(scanProgress)}%
             </span>
           </div>
-          <div className="h-1.5 w-full overflow-hidden rounded-full bg-zinc-800">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-sand">
             <div
-              className="h-full rounded-full bg-emerald-500 transition-[width] duration-300 ease-out"
+              className="h-full rounded-full bg-coral transition-[width] duration-300 ease-out"
               style={{ width: `${scanProgress}%` }}
             />
           </div>
@@ -410,12 +431,12 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
             placeholder='Location — "Bay Area", "Mission District", "New York"…'
             value={locationQuery}
             onChange={(e) => setLocationQuery(e.target.value)}
-            className="w-full px-4 py-2 pr-8 rounded-full bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+            className="w-full px-4 py-2 pr-8 rounded-full bg-white border border-sand text-sm text-ink placeholder-muted/60 focus:outline-none focus:border-coral"
           />
           {locationQuery && (
             <button
               onClick={() => setLocationQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-base leading-none"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-base leading-none"
             >
               ×
             </button>
@@ -429,12 +450,12 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
             placeholder="Search by name or product…"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full px-4 py-2 pr-8 rounded-full bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-zinc-500"
+            className="w-full px-4 py-2 pr-8 rounded-full bg-white border border-sand text-sm text-ink placeholder-muted/60 focus:outline-none focus:border-coral"
           />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery("")}
-              className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300 text-base leading-none"
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-muted hover:text-ink text-base leading-none"
             >
               ×
             </button>
@@ -445,30 +466,41 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
         {filtersActive && displayed.length > 0 && (
           <button
             onClick={copyList}
-            className="shrink-0 px-4 py-2 rounded-full bg-zinc-700 hover:bg-zinc-600 text-zinc-200 text-sm transition-colors"
+            className="shrink-0 px-4 py-2 rounded-full bg-white border border-sand text-ink hover:border-coral text-sm transition-colors"
           >
             {listCopied ? "Copied!" : "Copy list"}
+          </button>
+        )}
+
+        {/* Download a full-detail PDF of the currently shown results */}
+        {displayed.length > 0 && (
+          <button
+            onClick={downloadPdf}
+            disabled={pdfBusy}
+            className="shrink-0 px-4 py-2 rounded-full bg-white border border-sand text-ink hover:border-coral text-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {pdfBusy ? "Preparing…" : "Download PDF"}
           </button>
         )}
       </div>
 
       {/* Filter result count */}
       {filtersActive && displayed.length > 0 && (
-        <div className="text-xs text-zinc-500">
+        <div className="text-xs text-muted">
           {displayed.length} of {allSellers.length} sellers
         </div>
       )}
 
       {/* No sellers yet — the board is populated live via scan */}
       {allSellers.length === 0 && !scanning && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-6 py-10 text-center">
+        <div className="rounded-xl border border-sand bg-white px-6 py-10 text-center">
           <div className="text-2xl mb-3">🔍</div>
-          <h2 className="font-semibold text-white mb-1">
+          <h2 className="font-semibold text-ink mb-1">
             No companies scanned yet
           </h2>
-          <p className="text-zinc-400 text-sm">
+          <p className="text-muted text-sm">
             Enter a region above and hit{" "}
-            <span className="text-zinc-200">Scan for new sellers</span> to find
+            <span className="text-ink">Scan for new sellers</span> to find
             food makers.
           </p>
         </div>
@@ -476,14 +508,14 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
 
       {/* Empty state — sellers exist but filtered out */}
       {filtersActive && displayed.length === 0 && allSellers.length > 0 && (
-        <div className="rounded-xl border border-zinc-800 bg-zinc-900 px-6 py-8 text-center text-zinc-400 text-sm">
+        <div className="rounded-xl border border-sand bg-white px-6 py-8 text-center text-muted text-sm">
           No sellers match your filters.{" "}
           <button
             onClick={() => {
               setSearchQuery("");
               setLocationQuery("");
             }}
-            className="text-zinc-200 underline"
+            className="text-coral underline"
           >
             Clear filters
           </button>

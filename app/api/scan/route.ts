@@ -28,11 +28,11 @@ const TARGET_COUNT = 7;
 const SYSTEM = `You are a sourcing analyst for Hotplate, a drops-based ordering platform for independent food makers. Your job: use web search to find REAL, currently-active independent food makers in a given region who would be high-value candidates to move onto Hotplate.
 
 The profile we want:
+- TAKING ORDERS MANUALLY today — this is the #1 signal. Strongest fit: orders by PHONE CALL or EMAIL. Also strong: Instagram DM, Google Form, text/Venmo waitlist. The more manual and scrappy the ordering, the better the fit. (If a maker already uses a polished checkout/e-commerce platform they're a weaker fit.)
 - Drop-based or preorder ordering (weekly/biweekly drops, preorder windows that sell out)
-- Scrappy manual ordering today: Instagram DM, Google Form, text/email waitlist, Venmo
+- BEST product fit: specific, repeatable batch/box items where each drop is a defined product — cupcake boxes, cookie boxes, batches of cinnamon rolls, bagel/bread drops, dozens of tamales/empanadas, mochi, croissants. WEAKER fit: makers focused mainly on bespoke CUSTOM CAKES or fully made-to-order one-offs (harder to run as repeatable drops) — only include these if the manual-ordering signal is very strong, and prefer the batch/box makers.
 - Roughly 1,000-50,000 engaged followers (not a large chain, not a tiny hobbyist)
 - Local pickup or popup model, no large brick-and-mortar footprint
-- Cookies, pastries, bread, mochi, tamales, empanadas, specialty desserts, sandwiches, etc.
 
 Hard rules:
 - Only include makers you ACTUALLY found via web search and can tie to a real, verifiable social handle. NEVER invent a business, handle, or follower count. If you cannot verify a real handle, leave that maker out.
@@ -55,9 +55,9 @@ function buildUserPrompt(
   // cuisines/formats. Both still obey every rule above.
   const focusLine =
     focus === "diverse"
-      ? `\n\nDiversify HARD across cuisines and formats — go beyond the obvious bakeries to also surface tamales / empanadas / dumplings / mochi, savory and prepared-meal makers, and pop-ups tied to specific neighborhoods (search those neighborhoods by name).`
+      ? `\n\nDiversify HARD across cuisines and formats — go beyond the obvious bakeries to also surface tamales / empanadas / dumplings / mochi, savory and prepared-meal makers, and pop-ups tied to specific neighborhoods (search those neighborhoods by name). Favor makers selling specific batch/box drops (cupcake boxes, cookie boxes, cinnamon-roll batches, dozens of tamales/empanadas) over bespoke custom-cake makers.`
       : focus === "broad"
-        ? `\n\nPrioritize the clearest, most verifiable drop-based makers operating in the region right now.`
+        ? `\n\nPrioritize the clearest, most verifiable drop-based makers operating in the region right now — especially ones taking orders MANUALLY (phone, email, DM, form) and selling specific repeatable batch/box products rather than bespoke custom cakes.`
         : "";
   const exclude = excludeHandles.length
     ? `\n\nDo NOT return any of these handles — they are already on our list:\n${excludeHandles.join(", ")}`

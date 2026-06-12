@@ -6,7 +6,7 @@ const geist = Geist({ subsets: ["latin"], variable: "--font-geist-sans" });
 
 export const metadata: Metadata = {
   title: "ChefScout",
-  description: "Find and score high-value SF chefs ready to switch to Hotplate.",
+  description: "Find and score high-value food makers ready to switch to Hotplate.",
 };
 
 export default function RootLayout({

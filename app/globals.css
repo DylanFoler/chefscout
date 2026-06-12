@@ -1,5 +1,22 @@
 @import "tailwindcss";
 
+/* Hotplate brand palette (light theme). Tailwind v4 generates bg-/text-/border-
+   utilities from these tokens (e.g. bg-cream, text-ink, bg-coral, border-sand). */
+@theme {
+  --color-coral: #fb4545; /* primary CTA / key accent / high-value */
+  --color-coral-700: #e03b3b; /* hover */
+  --color-lilac: #e3e1ff; /* secondary surfaces / badges */
+  --color-lilac-deep: #6f6ad8; /* readable lilac text/accent on light */
+  --color-cream: #efede7; /* app background */
+  --color-sand: #d9d3c8; /* borders, muted surfaces */
+  --color-sand-50: #e8e3da; /* subtle fills (progress track, hovers) */
+  --color-ink: #1b2540; /* primary text (brand navy) */
+  --color-muted: #6e7180; /* secondary text */
+}
+
 body {
+  /* Font unchanged (Geist via next/font). */
   font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background-color: var(--color-cream);
+  color: var(--color-ink);
 }
