@@ -38,16 +38,27 @@ Hard rules:
 
 function buildUserPrompt(
   region: string | null,
-  excludeHandles: string[]
+  excludeHandles: string[],
+  focus?: "broad" | "diverse"
 ): string {
   const where = region
     ? `Region to search: "${region}". Every maker you return MUST actually operate in "${region}". Set "city", "neighborhood", and "metro_area" so they reflect "${region}".`
     : `Search broadly across major US cities for notable independent drop-based food makers.`;
+  // Two parallel discovery passes use different focuses so their unions cover more
+  // ground than one pass would: "broad" locks onto the clearest verifiable makers
+  // (the reliable floor), "diverse" pushes past the obvious bakeries into other
+  // cuisines/formats. Both still obey every rule above.
+  const focusLine =
+    focus === "diverse"
+      ? `\n\nDiversify HARD across cuisines and formats — go beyond the obvious bakeries to also surface tamales / empanadas / dumplings / mochi, savory and prepared-meal makers, and pop-ups tied to specific neighborhoods (search those neighborhoods by name).`
+      : focus === "broad"
+        ? `\n\nPrioritize the clearest, most verifiable drop-based makers operating in the region right now.`
+        : "";
   const exclude = excludeHandles.length
     ? `\n\nDo NOT return any of these handles — they are already on our list:\n${excludeHandles.join(", ")}`
     : "";
 
-  return `${where}
+  return `${where}${focusLine}
 
 Aim to return at least 5 qualifying makers (up to ${TARGET_COUNT}). Finding 5+ requires searching MULTIPLE angles — don't stop after the first 2-3 hits. Vary cuisine, format, and neighborhood across your searches, e.g.: instagram bakery preorders, cookie/pastry drops, popup or farmers-market vendors, tamales / empanadas / dumplings, home & cottage-food bakers, dessert pop-ups — and search specific neighborhoods within the region by name. Keep trying fresh angles until you have at least 5 that fit, or you've genuinely exhausted the options. Only return fewer than 5 if the region truly lacks enough makers. Quality still matters: never pad with off-profile makers or large chains, and never include anyone already on Hotplate.${exclude}
 
@@ -369,83 +380,101 @@ async function enrichAndVerify(
   );
 }
 
+// One discovery pass: stream the web-search loop and return the raw model text
+// (empty string if the shared deadline aborts it mid-flight). Streaming (not
+// create()) keeps the long connection alive past the SDK request timeout — a
+// non-streaming call tripped APIConnectionTimeoutError and caused empty scans.
+async function discoverOnce(
+  prompt: string,
+  effort: "low" | "medium",
+  signal: AbortSignal
+): Promise<string> {
+  const messages: Anthropic.MessageParam[] = [{ role: "user", content: prompt }];
+  // Web search runs a server-side loop; if it hits its cap mid-task the API
+  // returns stop_reason "pause_turn" and we re-send to let it continue.
+  for (let i = 0; i < 6; i++) {
+    const stream = anthropic.messages.stream(
+      {
+        model: "claude-sonnet-4-6",
+        // Generous output budget: thinking + tool blocks + multi-maker JSON can
+        // exceed 16k across a long loop and truncate (→ 0 parsed).
+        max_tokens: 32000,
+        // Adaptive thinking is required — thinking-off returned nothing.
+        thinking: { type: "adaptive" },
+        output_config: { effort },
+        system: SYSTEM,
+        // Classic web search (no dynamic filtering — _20260209 runs result-filter
+        // CODE every batch, ~23 round-trips, ~5 min/scan). max_uses caps searches.
+        tools: [
+          {
+            type: "web_search_20250305",
+            name: "web_search",
+            max_uses: effort === "low" ? 5 : 4,
+          },
+        ],
+        messages,
+      },
+      { signal }
+    );
+
+    let msg: Anthropic.Message;
+    try {
+      msg = await stream.finalMessage();
+    } catch (err) {
+      if (signal.aborted) return ""; // deadline hit — this pass yields nothing
+      throw err;
+    }
+
+    if (msg.stop_reason === "pause_turn") {
+      messages.push({ role: "assistant", content: msg.content });
+      continue;
+    }
+    return collectText(msg.content);
+  }
+  return "";
+}
+
 // Run the live web search and return validated, region-matched makers.
 async function searchMakers(
   region: string | null,
   locationQuery: string | undefined,
   excludeHandles: string[]
 ): Promise<Seller[]> {
-  const messages: Anthropic.MessageParam[] = [
-    { role: "user", content: buildUserPrompt(region, excludeHandles) },
-  ];
-
-  // Hard wall-clock bound on discovery. The web-search loop is the dominant,
-  // HIGHLY VARIABLE cost (a sparse region like NY finished in ~113s; a dense one
-  // like Seattle ran past 300s and Vercel 504'd the whole function). We can't
-  // resume a partial stream into usable JSON, so we (a) cap the search budget to
-  // lower the ceiling and (b) abort the stream at a deadline that leaves room for
-  // the enrich/verify pass — the function then returns gracefully (empty) instead
-  // of ever hitting Vercel's 300s cap. A normal scan finishes well before this.
-  const DISCOVERY_DEADLINE_MS = 265_000;
+  // TWO parallel discovery passes under a shared wall-clock deadline. Discovery is
+  // the dominant, HIGHLY VARIABLE cost (sparse NY ~113s; dense Seattle once ran
+  // past 300s → Vercel 504). We can't resume a partial stream into usable JSON, so:
+  //  - a fast "low"-effort pass is the reliable FLOOR — it finishes well within the
+  //    deadline and guarantees the scan is never empty, even for slow dense regions;
+  //  - a "medium"-effort pass adds BREADTH (gets us to 5+) when there's time;
+  //  - the shared deadline aborts whatever is still running, so the function returns
+  //    gracefully instead of ever hitting Vercel's 300s cap. Their unions are merged.
+  const DISCOVERY_DEADLINE_MS = 245_000;
   const abort = new AbortController();
   const deadline = setTimeout(() => abort.abort(), DISCOVERY_DEADLINE_MS);
-  let rawText = "";
+  let textFloor = "";
+  let textBreadth = "";
   try {
-    // Web search runs a server-side loop; if it hits its cap mid-task the API
-    // returns stop_reason "pause_turn" and we re-send to let it continue.
-    for (let i = 0; i < 6; i++) {
-      // Stream instead of awaiting create(): a non-streaming web-search call holds
-      // the connection open for minutes and trips the SDK request timeout
-      // (APIConnectionTimeoutError) — the cause of flaky/empty scans. Streaming
-      // keeps the connection alive until the search loop finishes.
-      const stream = anthropic.messages.stream(
-        {
-          model: "claude-sonnet-4-6",
-          // Generous output budget: across a long search loop the thinking + tool
-          // blocks + the multi-maker JSON can exceed 16k and truncate (→ 0 parsed).
-          max_tokens: 32000,
-          // Adaptive thinking is required — thinking-off returned nothing.
-          thinking: { type: "adaptive" },
-          // Medium (not low): low effort returns a conservative ~2-3 makers
-          // regardless of search budget; medium explores and commits to more.
-          output_config: { effort: "medium" },
-          system: SYSTEM,
-          // Classic web search (no dynamic filtering — the _20260209 version runs
-          // result-filtering CODE every batch, ~23 round-trips, ~5 min/scan).
-          // max_uses caps the search count and is the real latency lever; 4 keeps
-          // even dense regions safely under the deadline above (6 let Seattle 504).
-          tools: [{ type: "web_search_20250305", name: "web_search", max_uses: 4 }],
-          messages,
-        },
-        { signal: abort.signal }
-      );
-
-      let msg: Anthropic.Message;
-      try {
-        msg = await stream.finalMessage();
-      } catch (err) {
-        if (abort.signal.aborted) {
-          console.warn("[scan] discovery hit the time budget; returning what we have");
-          break;
-        }
-        throw err;
-      }
-
-      if (msg.stop_reason === "pause_turn") {
-        messages.push({ role: "assistant", content: msg.content });
-        continue;
-      }
-
-      rawText = collectText(msg.content);
-      break;
-    }
+    [textFloor, textBreadth] = await Promise.all([
+      discoverOnce(buildUserPrompt(region, excludeHandles, "broad"), "low", abort.signal),
+      discoverOnce(buildUserPrompt(region, excludeHandles, "diverse"), "medium", abort.signal),
+    ]);
   } finally {
     clearTimeout(deadline);
   }
+  if (!textFloor && !textBreadth) {
+    console.warn("[scan] both discovery passes hit the time budget — empty result");
+  }
 
-  const parsed = parseSellers(rawText, excludeHandles).filter(
-    (s) => !looksOnHotplate(s)
-  );
+  // Merge + dedupe by handle (floor pass first so its verified picks win ties).
+  const merged = new Map<string, Seller>();
+  for (const s of [
+    ...parseSellers(textFloor, excludeHandles),
+    ...parseSellers(textBreadth, excludeHandles),
+  ]) {
+    const k = s.handle.toLowerCase();
+    if (!merged.has(k)) merged.set(k, s);
+  }
+  const parsed = [...merged.values()].filter((s) => !looksOnHotplate(s));
 
   // Region tagging (Fix for state/region scans): instead of DROPPING makers whose
   // city-level fields don't literally contain the searched region — which nukes
