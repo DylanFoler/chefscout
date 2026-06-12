@@ -13,7 +13,7 @@ export type RegionEntry = { sellers: Seller[]; seen: string[] };
 // name-dropped (e.g. @koffeteria, a Houston bakery, cached under Denver/Atlanta)
 // got stored before the geo check existed; fresh scans repopulate geo-filtered.
 // (Geo is stable, so the live path filters before caching — no cache-hit re-check.)
-const keyFor = (region: string) => `chefscout:region:v6:${region}`;
+const keyFor = (region: string) => `chefscout:region:v7:${region}`;
 
 // Regions go stale (makers come and go); expire cached discovery after 7 days.
 const TTL_SECONDS = 60 * 60 * 24 * 7;
