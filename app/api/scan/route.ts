@@ -297,8 +297,38 @@ async function fetchInstagramFollowers(handle: string): Promise<number | null> {
   }
 }
 
-// Likely Hotplate store slugs for a maker (handle- and name-derived), plus the
-// exact slug if their own bio link already points at a hotplate store.
+// Metro / region tags and business descriptors that makers tack onto their
+// handle or name but routinely DROP from their Hotplate store slug — e.g. handle
+// @soupbelly_atl but store hotplate.com/soupbelly. We probe BOTH the full and the
+// suffix-stripped forms so a trailing location/descriptor can't hide a store.
+const SLUG_SUFFIX_TOKENS = new Set([
+  // metro / region tags
+  "atl", "atlanta", "atx", "austin", "nyc", "ny", "bk", "brooklyn", "sf", "sfo",
+  "sj", "sanjose", "sd", "sandiego", "la", "lax", "losangeles", "oc", "pdx",
+  "portland", "sea", "seattle", "chi", "chicago", "chitown", "dc", "dmv", "bos",
+  "boston", "hou", "houston", "den", "denver", "phx", "phoenix", "dfw", "dallas",
+  "miami", "mia", "nola", "vegas", "slc", "pnw", "socal", "norcal", "bay",
+  "bayarea", "eastbay",
+  // business descriptors
+  "co", "company", "llc", "bakery", "bakeshop", "bakehouse", "bakinghouse",
+  "baking", "bakes", "baker", "bakers", "kitchen", "kitchens", "foods", "food",
+  "treats", "sweets", "sweet", "dessert", "desserts", "cakes", "cake", "cookies",
+  "cookie", "bread", "breads", "pastry", "pastries", "patisserie", "panaderia",
+  "eats", "eatery", "confections", "shop", "cafe", "official", "goods",
+]);
+
+// Drop trailing suffix tokens (keep at least one) so "soup belly atl" -> "soupbelly".
+function stripSuffixTokens(tokens: string[]): string[] {
+  const t = [...tokens];
+  while (t.length > 1 && SLUG_SUFFIX_TOKENS.has(t[t.length - 1])) t.pop();
+  return t;
+}
+
+// Likely Hotplate store slugs for a maker (handle- and name-derived, with common
+// location/descriptor suffixes stripped), plus the exact slug if their bio link
+// already points at a hotplate store. Over-generating is SAFE: a probed slug is
+// only treated as a leak when the store's Instagram or name actually matches this
+// maker (see isOnHotplate), so a coincidental slug collision is never flagged.
 function candidateSlugs(seller: Seller): {
   slugs: string[];
   fromLink: string | null;
@@ -306,10 +336,23 @@ function candidateSlugs(seller: Seller): {
   const h = seller.handle.replace(/^@/, "").toLowerCase();
   const fromLink =
     seller.website_or_linktree?.match(HOTPLATE_LINK)?.[1]?.toLowerCase() ?? null;
-  const slugs = [fromLink, h, h.replace(/[._]/g, ""), norm(seller.name)].filter(
-    (s): s is string => !!s
-  );
-  return { slugs: [...new Set(slugs)], fromLink };
+
+  const cands = new Set<string>();
+  if (fromLink) cands.add(fromLink);
+
+  const hTokens = h.split(/[._]+/).filter(Boolean);
+  cands.add(h); // soupbelly_atl
+  cands.add(h.replace(/[._]/g, "")); // soupbellyatl
+  cands.add(stripSuffixTokens(hTokens).join("")); // soupbelly
+
+  const nWords = seller.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  if (nWords.length) {
+    cands.add(nWords.join("")); // soupbellyatl
+    cands.add(stripSuffixTokens(nWords).join("")); // soupbelly
+  }
+
+  const slugs = [...cands].filter((s) => s.length >= 3).slice(0, 8);
+  return { slugs, fromLink };
 }
 
 // Fetch a hotplate.com store page; { name, ig } if it's a real store, else null.
