@@ -36,7 +36,8 @@ The profile we want:
 
 Hard rules:
 - Only include makers you ACTUALLY found via web search and can tie to a real, verifiable social handle. NEVER invent a business, handle, or follower count. If you cannot verify a real handle, leave that maker out.
-- Prefer Instagram; use the maker's real @handle exactly.
+- Prefer Instagram; use the maker's real, CURRENT @handle exactly as it appears today. The handle must resolve to a LIVE Instagram profile (instagram.com/<handle> loads a real account, not a "page isn't available" error). Do NOT use an old/renamed/defunct handle you recall — if a maker rebranded, use their new handle, and if you can't confirm the current handle resolves, leave them out.
+- Only include CURRENTLY ACTIVE makers — recent posts/drops within roughly the last few months. Skip accounts that appear dormant or abandoned (no recent activity).
 - Every maker must be HOME-BASED in the requested region — their own kitchen/storefront/popup operation physically located there. Do NOT include nationally-famous makers headquartered in another city just because they're well-known or you recall them; a maker featured on "best of" lists for a different metro does not belong here. Set "city" to the maker's real home city within the region (not a city they merely ship to or guest-popup in).
 - CRITICAL — EXCLUDE anyone already on Hotplate. We want PROSPECTS, never existing Hotplate sellers. Before including ANY maker, check their Instagram bio, link-in-bio / Linktree, and recent posts (these usually appear in search results) for a Hotplate link or mention: a "hotplate.com/..." or "hotplate.co/..." store URL, a bare "hotplate.com" link, or wording like "order on Hotplate" / "drops on Hotplate". If you see ANY of these, drop them. When a maker is otherwise a strong fit but you can't tell whether they use Hotplate from the search results, run one quick "<their handle> hotplate" search to confirm before including them. (Example: a maker like @theinterruptedbaker whose Instagram bio links to a hotplate.com store must be excluded.)
 - Return ONLY a JSON array — no markdown, no prose, no code fences.`;
@@ -251,26 +252,43 @@ function parseFollowerCount(raw: string): number | null {
 const IG_UA =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36";
 
-type IgProfile = { followers: number | null; igCity: string | null };
+// `exists`: true = the handle resolves to a live profile; false = CONFIRMED
+// missing (the username 404s / "this page isn't available" — a broken or renamed
+// handle); null = couldn't tell (login-walled / blocked). `lastPostTs` is the unix
+// time of the most recent post when visible (used to drop clearly-abandoned
+// accounts). Both stay transient — used only for the live-path drop in searchMakers.
+type IgProfile = {
+  followers: number | null;
+  igCity: string | null;
+  exists: boolean | null;
+  lastPostTs: number | null;
+};
+
+const IG_MISSING = /this page isn't available|page may have been removed|sorry, this page/i;
 
 // Instagram profile facts for a handle. Primary source is the web_profile_info
-// JSON endpoint (small response, exact `edge_followed_by.count` PLUS the maker's
-// real `business_address_json.city_name` like "Houston, Texas" for business
-// accounts — used for region verification); the public profile's og:description
-// ("X Followers, ...") is the follower fallback when JSON is unavailable (no
-// address there). Returns nulls if blocked / not found. Concurrency-limited.
+// JSON endpoint (exact `edge_followed_by.count`, the maker's real
+// `business_address_json.city_name`, the latest-post timestamp, AND a definitive
+// 404 when the username doesn't exist); the public profile page is the fallback
+// (followers via og:description, plus a second existence read). Concurrency-limited.
 async function fetchInstagramProfile(handle: string): Promise<IgProfile> {
   const h = handle.replace(/^@/, "").trim().toLowerCase();
-  if (!h) return { followers: null, igCity: null };
+  const EMPTY: IgProfile = {
+    followers: null,
+    igCity: null,
+    exists: null,
+    lastPostTs: null,
+  };
+  if (!h) return EMPTY;
+
+  let sawMissing = false; // the JSON API returned a 404 (username not found)
 
   // Primary: lightweight JSON API used by instagram.com's own web client. Retry
   // a few times — Instagram login-walls datacenter (Vercel) IPs PROBABILISTICALLY,
-  // so a retry often succeeds where the first attempt got a login page. This
-  // matters for the region check: a missed business address means we can't catch
-  // an out-of-region maker (e.g. @koffeteria, Houston, leaking into other scans).
+  // so a retry often succeeds where the first attempt got a login page.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const profile = await httpLimit(async (): Promise<IgProfile | null> => {
+      const r = await httpLimit(async (): Promise<IgProfile | "missing" | null> => {
         const res = await fetch(
           `https://i.instagram.com/api/v1/users/web_profile_info/?username=${encodeURIComponent(h)}`,
           {
@@ -282,43 +300,76 @@ async function fetchInstagramProfile(handle: string): Promise<IgProfile> {
             },
           }
         );
-        if (!res.ok) return null;
+        if (res.status === 404) return "missing"; // username does not exist
+        if (!res.ok) return null; // 401/429/etc — blocked, can't tell
         const data = await res.json().catch(() => null);
         const user = data?.data?.user;
         if (!user) return null;
         const c = user.edge_followed_by?.count;
         const followers =
           typeof c === "number" && c > 0 ? Math.round(c) : null;
-        // Ground-truth location: only the structured business address (never the
-        // noisy free-text bio) is trusted to authorize a region drop later.
         const city = user.business_address_json?.city_name;
         const igCity =
           typeof city === "string" && city.trim() ? city.trim() : null;
-        return { followers, igCity };
+        const ts =
+          user.edge_owner_to_timeline_media?.edges?.[0]?.node?.taken_at_timestamp;
+        const lastPostTs = typeof ts === "number" ? ts : null;
+        return { followers, igCity, exists: true, lastPostTs };
       });
-      if (profile && (profile.followers != null || profile.igCity)) return profile;
+      if (r === "missing") {
+        sawMissing = true;
+        break; // definitive — stop retrying
+      }
+      if (r) return r; // got the user
     } catch {
       // retry, then fall through to the HTML fallback
     }
   }
 
-  // Fallback: server-rendered og:description on the public profile page (no city).
+  // The JSON 404 is a DEFINITIVE "username does not exist": datacenter blocking
+  // returns 401/429 (handled as null above), never 404. Trust it. The public page
+  // canNOT corroborate from a blocked IP — it returns a 200 login shell for BOTH
+  // missing and real handles (the "this page isn't available" text only renders
+  // client-side), so it must never override this.
+  if (sawMissing) return { ...EMPTY, exists: false };
+
+  // JSON was login-walled (not a 404). Hit the public page only to SALVAGE a
+  // follower count, and to catch the rare case where it genuinely 404s. Existence
+  // otherwise stays unknown (null) — we never guess "missing" from a 200 shell.
   try {
-    const followers = await httpLimit(async () => {
-      const res = await fetch(`https://www.instagram.com/${h}/`, {
-        signal: AbortSignal.timeout(6000),
-        headers: { "user-agent": IG_UA, "accept-language": "en-US,en;q=0.9" },
-      });
-      if (!res.ok) return null;
-      const html = await res.text();
-      const desc = html.match(/property="og:description"\s+content="([^"]*)"/i)?.[1];
-      const found = desc?.match(/([\d.,]+\s*[KMB]?)\s+Followers/i)?.[1];
-      return found ? parseFollowerCount(found) : null;
-    });
-    return { followers, igCity: null };
+    const html = await httpLimit(
+      async (): Promise<{ status: number; body: string } | null> => {
+        const res = await fetch(`https://www.instagram.com/${h}/`, {
+          signal: AbortSignal.timeout(6000),
+          headers: { "user-agent": IG_UA, "accept-language": "en-US,en;q=0.9" },
+        });
+        return {
+          status: res.status,
+          body: res.status === 200 ? await res.text() : "",
+        };
+      }
+    );
+    if (html) {
+      if (html.status === 404 || (html.status === 200 && IG_MISSING.test(html.body)))
+        return { ...EMPTY, exists: false };
+      if (html.status === 200) {
+        const desc = html.body.match(
+          /property="og:description"\s+content="([^"]*)"/i
+        )?.[1];
+        const found = desc?.match(/([\d.,]+\s*[KMB]?)\s+Followers/i)?.[1];
+        return {
+          followers: found ? parseFollowerCount(found) : null,
+          igCity: null,
+          exists: null,
+          lastPostTs: null,
+        };
+      }
+    }
   } catch {
-    return { followers: null, igCity: null };
+    // unknown
   }
+
+  return { ...EMPTY, exists: null };
 }
 
 // Metro / region tags and business descriptors that makers tack onto their
@@ -432,15 +483,25 @@ async function isOnHotplate(s: Seller): Promise<boolean> {
 // verification. Every maker and every probe runs concurrently, so wall-clock ~=
 // the slowest maker. `igCity` is transient (used only for the live-path region
 // check in searchMakers) — it is not stored on the Seller.
-async function enrichAndVerify(
-  candidates: Seller[]
-): Promise<{ seller: Seller; onHotplate: boolean; igCity: string | null }[]> {
+type VerifiedMaker = {
+  seller: Seller;
+  onHotplate: boolean;
+  igCity: string | null;
+  exists: boolean | null;
+  lastPostTs: number | null;
+};
+async function enrichAndVerify(candidates: Seller[]): Promise<VerifiedMaker[]> {
   return Promise.all(
     candidates.map(async (s) => {
       const [profile, onHotplate] = await Promise.all([
         s.platform === "instagram"
           ? fetchInstagramProfile(s.handle)
-          : Promise.resolve<IgProfile>({ followers: null, igCity: null }),
+          : Promise.resolve<IgProfile>({
+              followers: null,
+              igCity: null,
+              exists: null,
+              lastPostTs: null,
+            }),
         isOnHotplate(s),
       ]);
       const followers = profile.followers ?? s.followers ?? null;
@@ -448,7 +509,13 @@ async function enrichAndVerify(
       // repeat offenders whose live fetch login-walls (keeps the geo check
       // flawless for them regardless of IG fetch luck).
       const igCity = profile.igCity ?? knownMakerCity(s.handle);
-      return { seller: { ...s, followers }, onHotplate, igCity };
+      return {
+        seller: { ...s, followers },
+        onHotplate,
+        igCity,
+        exists: profile.exists,
+        lastPostTs: profile.lastPostTs,
+      };
     })
   );
 }
@@ -567,35 +634,55 @@ async function searchMakers(
       })
     : parsed;
 
-  // Enrich (real IG follower counts + real city) + verify (drop anyone already on
-  // Hotplate), parallel per maker. This is the reliable Hotplate gate.
+  // Enrich (real IG followers + city + liveness) + verify Hotplate, parallel per
+  // maker. Then drop anyone who fails a gate, with the reason logged. All gates are
+  // CONSERVATIVE: a maker is only dropped on a confident signal, so a login-walled
+  // / unverifiable maker is kept rather than wrongly cut.
   const verified = await enrichAndVerify(regional);
 
-  const onHotplate = verified
-    .filter((r) => r.onHotplate)
-    .map((r) => r.seller.handle);
-  if (onHotplate.length) {
+  const STALE_SECONDS = 365 * 24 * 60 * 60; // most recent post > ~12mo = abandoned
+  const nowSec = Date.now() / 1000;
+  const onHotplate: string[] = [];
+  const deadLink: string[] = [];
+  const outOfRegion: string[] = [];
+  const inactive: string[] = [];
+
+  const survivors = verified.filter((r) => {
+    const handle = r.seller.handle;
+    if (r.onHotplate) {
+      onHotplate.push(handle);
+      return false;
+    }
+    // Broken / nonexistent Instagram — the handle 404s or shows "this page isn't
+    // available" (renamed, deleted, or a handle the model got wrong). Never surface
+    // a maker whose link is dead. exists===null (login-walled) is kept.
+    if (r.exists === false) {
+      deadLink.push(handle);
+      return false;
+    }
+    // Out of the searched region (state mismatch on the real IG business address).
+    if (region && geoContradicts(region, r.igCity)) {
+      outOfRegion.push(`${handle} [${r.igCity}]`);
+      return false;
+    }
+    // Clearly abandoned — most recent visible post is over a year old.
+    if (r.lastPostTs != null && nowSec - r.lastPostTs > STALE_SECONDS) {
+      inactive.push(handle);
+      return false;
+    }
+    return true;
+  });
+
+  if (onHotplate.length)
     console.log("[scan] excluded (already on Hotplate):", onHotplate.join(", "));
-  }
+  if (deadLink.length)
+    console.log("[scan] excluded (dead/broken Instagram):", deadLink.join(", "));
+  if (outOfRegion.length)
+    console.log("[scan] excluded (out of region):", outOfRegion.join(", "));
+  if (inactive.length)
+    console.log("[scan] excluded (inactive >12mo):", inactive.join(", "));
 
-  // Region accuracy: drop a maker whose Instagram business address is in a
-  // different STATE than the searched region (e.g. a Houston bakery name-dropped
-  // for a "Denver" scan). Conservative — only fires on a confident mismatch
-  // (see geoContradicts); regions it can't resolve / multi-state metros keep all.
-  const outOfRegion = region
-    ? verified.filter((r) => !r.onHotplate && geoContradicts(region, r.igCity))
-    : [];
-  if (outOfRegion.length) {
-    console.log(
-      "[scan] excluded (out of region):",
-      outOfRegion.map((r) => `${r.seller.handle} [${r.igCity}]`).join(", ")
-    );
-  }
-  const dropped = new Set(outOfRegion.map((r) => r.seller.handle.toLowerCase()));
-
-  return verified
-    .filter((r) => !r.onHotplate && !dropped.has(r.seller.handle.toLowerCase()))
-    .map((r) => r.seller);
+  return survivors.map((r) => r.seller);
 }
 
 export async function POST(req: NextRequest) {
