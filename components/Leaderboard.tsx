@@ -172,6 +172,12 @@ export default function Leaderboard({ sellers, preloadedScores = {} }: Props) {
 
   const displayed = sorted
     ? [...allSellers].sort((a, b) => {
+        // Freshly-discovered sellers pin to the top so they're visible the
+        // moment they're found — otherwise their null score sorts them to the
+        // bottom of the scored list and they look like they never appeared.
+        const na = states[a.id]?.isNew ? 1 : 0;
+        const nb = states[b.id]?.isNew ? 1 : 0;
+        if (na !== nb) return nb - na;
         const sa = states[a.id]?.score?.score ?? -1;
         const sb = states[b.id]?.score?.score ?? -1;
         return sb - sa;
